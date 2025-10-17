@@ -425,6 +425,74 @@ class SimpleUI:
         filled = int(width * progress / 100)
         bar = "█" * filled + "░" * (width - filled)
         return f"[{bar}] {progress:.1f}%"
+    
+    def draw_loading_spinner(self, step, total_steps, message=""):
+        """绘制加载动画"""
+        spinner_chars = "|/-\\"
+        spinner = spinner_chars[step % len(spinner_chars)]
+        progress = int((step / total_steps) * 100) if total_steps > 0 else 0
+        return f"{spinner} {message} ({progress}%)"
+    
+    def show_operation_progress(self, operation, step, total_steps, message=""):
+        """显示操作进度"""
+        self.clear_screen()
+        self.print_header()
+        
+        # 显示当前操作
+        print(f"🔄 {operation}")
+        print()
+        
+        # 显示进度条
+        if total_steps > 0:
+            progress = (step / total_steps) * 100
+            print(f"进度: {self.draw_progress_bar(progress)}")
+        else:
+            spinner = self.draw_loading_spinner(step, 0, message)
+            print(f"状态: {spinner}")
+        
+        print()
+        print(f"📝 {message}")
+        print()
+        print("请稍候...")
+    
+    def show_running_progress(self, current_distance, target_distance, current_time, pace):
+        """显示跑步进度"""
+        self.clear_screen()
+        self.print_header()
+        
+        # 计算进度和预计剩余时间
+        progress = min(100, (current_distance / target_distance) * 100)
+        remaining_distance = max(0, target_distance - current_distance)
+        
+        if pace > 0 and remaining_distance > 0:
+            remaining_time_seconds = (remaining_distance / 1000) * pace * 60
+            eta_str = self.campus_fly.format_time(int(remaining_time_seconds))
+        else:
+            eta_str = "计算中..."
+        
+        # 显示跑步状态
+        print("🏃‍♂️ 正在跑步中...")
+        print()
+        
+        # 显示进度条
+        print(f"📊 跑步进度: {self.draw_progress_bar(progress)}")
+        print()
+        
+        # 显示跑步数据
+        time_str = self.campus_fly.format_time(current_time)
+        distance_km = current_distance / 1000
+        target_km = target_distance / 1000
+        
+        print(f"⏱️  当前时长: {time_str}")
+        print(f"📏 跑步距离: {distance_km:.2f}km / {target_km:.1f}km")
+        print(f"🏃 当前配速: {pace:.2f}min/km")
+        print(f"⏰ 预计剩余: {eta_str}")
+        print()
+        
+        # 显示提示信息
+        print("💡 提示: 按 Ctrl+C 可以提前结束并提交跑步数据")
+        print()
+        print("⌨️  按 Ctrl+C 中断并提交跑步")
         
     def show_running_screen(self, config):
         """显示跑步界面"""
@@ -436,155 +504,82 @@ class SimpleUI:
         # 在后台线程中运行跑步程序
         def run_campus_fly():
             try:
-                self.current_status = "初始化中"
-                self.add_log("🚀 开始校园跑程序...")
+                # 前期准备阶段 - 详细进度条
+                preparation_steps = [
+                    ("初始化", "正在设置学校信息..."),
+                    ("登录", f"正在登录用户: {config['username']}"),
+                    ("查询计划", "正在获取您的体测计划..."),
+                    ("开始跑步", "正在启动跑步...")
+                ]
                 
-                # 设置学校ID
+                for i, (step_name, step_desc) in enumerate(preparation_steps, 1):
+                    self.current_status = step_name
+                    self.show_operation_progress(f"前期准备 - {step_name}", i, len(preparation_steps), step_desc)
+                    time.sleep(0.3)  # 减少延迟，让进度条更流畅
+                
+                # 步骤1: 初始化
                 if config["school"] in self.campus_fly.agency_ids:
                     self.campus_fly.agency_id = int(self.campus_fly.agency_ids[config["school"]])
                     self.campus_fly.auth_info["agencyId"] = self.campus_fly.agency_id
                 
-                # 登录
-                self.current_status = "登录中"
-                self.add_log("🔐 正在登录...")
-                self.logger.info(f"开始登录用户: {config['username']}")
-                
+                # 步骤2: 登录
                 try:
                     login_result = self.campus_fly.login(
                         config["username"], 
                         config["password"]
                     )
                     if len(login_result) != 3:
-                        self.add_log(f"❌ 登录返回格式错误: {login_result}", "ERROR")
                         self.current_status = "登录失败"
                         return
                     success, token, response = login_result
                     
-                    # 记录详细登录信息
-                    self.logger.info(f"登录响应: {response}")
-                    
                 except Exception as e:
-                    self.add_log(f"❌ 登录异常: {str(e)}", "ERROR")
                     self.logger.error(f"登录异常: {str(e)}", exc_info=True)
                     self.current_status = "登录失败"
                     return
                     
                 if not success:
                     error_msg = response.get('message', '未知错误') if response else '登录失败'
-                    self.add_log(f"❌ 登录失败: {error_msg}", "ERROR")
                     self.logger.error(f"登录失败: {error_msg}")
-                    self.logger.error(f"完整登录响应: {response}")
-                    
-                    # 显示详细的错误信息
-                    if response:
-                        self.add_log(f"🔍 错误代码: {response.get('code')}", "ERROR")
-                        self.add_log(f"🔍 完整错误响应: {response}", "ERROR")
-                        if 'error_type' in response:
-                            self.add_log(f"🔍 错误类型: {response['error_type']}", "ERROR")
-                        if 'response_status' in response:
-                            self.add_log(f"🔍 HTTP状态码: {response['response_status']}", "ERROR")
-                        if 'response_text' in response:
-                            self.add_log(f"🔍 原始响应文本: {response['response_text']}", "ERROR")
-                    
                     self.current_status = "登录失败"
                     return
                 
                 self.campus_fly.auth_info["token"] = token
-                self.add_log("✅ 登录成功")
                 self.logger.info("登录成功")
                 
-                # 验证token
-                self.current_status = "验证中"
-                self.add_log("🔐 验证token...")
-                self.logger.info("开始验证token")
-                
-                if not self.campus_fly.verify_token(token):
-                    self.add_log("❌ Token验证失败", "ERROR")
-                    self.logger.error("Token验证失败")
-                    self.current_status = "验证失败"
-                    return
-                
-                self.add_log("✅ Token验证成功")
-                self.logger.info("Token验证成功")
-                
-                # 查询体测计划
-                self.current_status = "查询计划"
-                self.add_log("📋 查询体测计划...")
-                self.logger.info("开始查询体测计划")
-                
+                # 步骤3: 查询体测计划
                 try:
                     plans_result = self.campus_fly.query_fitness_plans(token)
                     if len(plans_result) != 3:
-                        self.add_log(f"❌ 查询体测计划返回格式错误: {plans_result}", "ERROR")
                         self.current_status = "查询失败"
                         return
                     success, plans, response = plans_result
                     
-                    # 记录详细查询信息
-                    self.logger.info(f"体测计划查询响应: {response}")
-                    
                 except Exception as e:
-                    self.add_log(f"❌ 查询体测计划异常: {str(e)}", "ERROR")
                     self.logger.error(f"查询体测计划异常: {str(e)}", exc_info=True)
                     self.current_status = "查询失败"
                     return
                     
                 if not success or not plans:
                     error_msg = response.get('message', '未找到体测计划') if response else '未找到体测计划'
-                    self.add_log(f"❌ 未找到体测计划: {error_msg}", "ERROR")
                     self.logger.error(f"未找到体测计划: {error_msg}")
-                    self.logger.error(f"完整体测计划查询响应: {response}")
-                    
-                    # 显示详细的错误信息
-                    if response:
-                        self.add_log(f"🔍 错误状态码: {response.get('status')}", "ERROR")
-                        self.add_log(f"🔍 完整错误响应: {response}", "ERROR")
-                        if 'error_type' in response:
-                            self.add_log(f"🔍 错误类型: {response['error_type']}", "ERROR")
-                        if 'response_status' in response:
-                            self.add_log(f"🔍 HTTP状态码: {response['response_status']}", "ERROR")
-                        if 'response_text' in response:
-                            self.add_log(f"🔍 原始响应文本: {response['response_text']}", "ERROR")
-                    
                     self.current_status = "无体测计划"
                     return
                 
-                # 如果有多个计划，让用户选择
-                if len(plans) > 1:
-                    self.add_log(f"📋 找到 {len(plans)} 个体测计划，请选择:")
-                    for i, plan in enumerate(plans):
-                        plan_type = "当前" if i < len([p for p in plans if 'current' in str(p)]) else "历史"
-                        self.add_log(f"  {i+1}. {plan_type}计划: {plan['fitnessName']} (ID: {plan['fitnessId']})")
-                    
-                    # 默认选择第一个（当前计划）
-                    selected_plan = plans[0]
-                    self.add_log(f"💡 自动选择第一个计划: {selected_plan['fitnessName']}")
-                else:
-                    selected_plan = plans[0]
-                
+                # 选择体测计划
+                selected_plan = plans[0]
                 self.campus_fly.auth_info["fitnessId"] = selected_plan["fitnessId"]
-                self.add_log(f"✅ 使用体测计划: {selected_plan['fitnessName']} (ID: {selected_plan['fitnessId']})")
+                self.logger.info(f"使用体测计划: {selected_plan['fitnessName']} (ID: {selected_plan['fitnessId']})")
                 
-                # 开始跑步
-                self.current_status = "开始跑步"
-                self.add_log("🏃 开始跑步...")
-                self.logger.info("开始启动跑步")
-                
+                # 步骤4: 开始跑步
                 if not self.campus_fly.start_running():
-                    self.add_log("❌ 开始跑步失败", "ERROR")
                     self.logger.error("开始跑步失败")
-                    
-                    # 显示详细的错误信息（start_running方法已经打印了详细信息，这里记录到日志）
-                    self.logger.error("开始跑步失败，详细信息已在上方显示")
-                    
                     self.current_status = "开始失败"
                     return
                 
-                self.add_log("✅ 跑步开始成功")
                 self.logger.info("跑步开始成功")
                 
                 mode_text = "跑道轨迹" if config["mode"] == "track" else "随机轨迹"
-                self.add_log(f"💡 使用{mode_text}模式")
                 self.logger.info(f"使用{mode_text}模式，目标距离: {config['distance']}米")
                 
                 # 模拟跑步过程
@@ -602,13 +597,12 @@ class SimpleUI:
                     if self.campus_fly.running_state["distance"] >= config["distance"]:
                         break
                 
-                # 结束跑步
+                # 步骤5: 结束跑步
                 self.current_status = "结束跑步"
-                self.add_log("🏁 结束跑步...")
-                self.logger.info("开始结束跑步")
+                self.show_operation_progress("结束跑步", 5, 5, "正在提交跑步数据...")
+                time.sleep(0.5)
                 
                 if self.campus_fly.end_running():
-                    self.add_log("🎉 校园跑完成并成功提交！")
                     self.logger.info("校园跑完成并成功提交")
                     self.current_status = "完成"
                     
@@ -621,12 +615,10 @@ class SimpleUI:
                         }
                         self.logger.info(f"跑步统计: {stats}")
                 else:
-                    self.add_log("❌ 提交跑步数据失败", "ERROR")
                     self.logger.error("提交跑步数据失败")
                     self.current_status = "提交失败"
                     
             except Exception as e:
-                self.add_log(f"❌ 程序执行异常: {str(e)}", "ERROR")
                 self.logger.error(f"程序执行异常: {str(e)}", exc_info=True)
                 self.current_status = "异常"
             finally:
@@ -653,64 +645,70 @@ class SimpleUI:
             
     def show_running_status(self, target_distance):
         """显示跑步状态"""
-        print("按 Ctrl+C 可以停止跑步")
-        print()
-        
         try:
             while self.running or self.current_status in ["完成", "提交失败", "异常"]:
-                # 清屏并重新绘制
-                self.clear_screen()
-                self.print_header()
-                
-                # 显示当前状态
-                status_emoji = {
-                    "初始化中": "🔄",
-                    "登录中": "🔐",
-                    "验证中": "🔍",
-                    "查询计划": "📋",
-                    "开始跑步": "🏃",
-                    "跑步中": "🏃‍♂️",
-                    "结束跑步": "🏁",
-                    "完成": "✅",
-                    "登录失败": "❌",
-                    "验证失败": "❌",
-                    "无体测计划": "❌",
-                    "开始失败": "❌",
-                    "提交失败": "❌",
-                    "异常": "💥"
-                }
-                
-                print(f"{status_emoji.get(self.current_status, '🔄')} 状态: {self.current_status}")
-                print()
-                
-                # 显示跑步数据
-                if hasattr(self.campus_fly, 'running_state') and self.campus_fly.running_state["time"] > 0:
-                    time_str = self.campus_fly.format_time(self.campus_fly.running_state["time"])
-                    distance_km = self.campus_fly.running_state["distance"] / 1000
-                    pace = (self.campus_fly.running_state["time"] / 60) / distance_km if distance_km > 0 else 0
-                    progress = min(100, (self.campus_fly.running_state["distance"] / target_distance) * 100)
+                # 根据状态显示不同界面
+                if self.current_status == "跑步中" and hasattr(self.campus_fly, 'running_state') and self.campus_fly.running_state["time"] > 0:
+                    # 显示跑步进度条
+                    current_time = self.campus_fly.running_state["time"]
+                    current_distance = self.campus_fly.running_state["distance"]
+                    distance_km = current_distance / 1000
+                    pace = (current_time / 60) / distance_km if distance_km > 0 else 0
                     
-                    print(f"⏱️  时长: {time_str}")
-                    print(f"📏 距离: {distance_km:.2f}km / {target_distance/1000:.1f}km")
-                    print(f"🏃 配速: {pace:.2f}min/km")
-                    print(f"📊 进度: {self.draw_progress_bar(progress)}")
+                    self.show_running_progress(current_distance, target_distance, current_time, pace)
+                else:
+                    # 显示其他状态
+                    self.clear_screen()
+                    self.print_header()
+                    
+                    # 显示当前状态
+                    status_emoji = {
+                        "初始化中": "🔄",
+                        "登录中": "🔐",
+                        "查询计划": "📋",
+                        "开始跑步": "🏃",
+                        "跑步中": "🏃‍♂️",
+                        "结束跑步": "🏁",
+                        "完成": "✅",
+                        "登录失败": "❌",
+                        "查询失败": "❌",
+                        "无体测计划": "❌",
+                        "开始失败": "❌",
+                        "提交失败": "❌",
+                        "异常": "💥"
+                    }
+                    
+                    print(f"{status_emoji.get(self.current_status, '🔄')} 状态: {self.current_status}")
                     print()
-                
-                # 显示最近日志
-                print("📝 最近日志:")
-                for msg in self.log_messages[-5:]:
-                    print(f"  {msg}")
-                
-                print()
-                print("按 Ctrl+C 停止跑步")
+                    
+                    # 显示状态信息
+                    if self.current_status == "完成":
+                        print("🎉 跑步完成！数据已成功提交")
+                    elif self.current_status in ["登录失败", "查询失败", "无体测计划", "开始失败", "提交失败", "异常"]:
+                        print(f"❌ 操作失败，请检查网络连接和账号信息")
+                    else:
+                        print("请稍候...")
+                    
+                    print()
+                    print("⌨️  按 Ctrl+C 中断并提交跑步")
                 
                 time.sleep(1)
                 
         except KeyboardInterrupt:
-            print("\n\n⏹️ 用户停止跑步")
+            print("\n\n⏹️ 用户中断跑步，正在提交数据...")
             self.running = False
             if hasattr(self.campus_fly, 'running_state'):
                 self.campus_fly.running_state["is_running"] = False
+                
+            # 提交跑步数据
+            if hasattr(self.campus_fly, 'end_running'):
+                try:
+                    if self.campus_fly.end_running():
+                        print("✅ 跑步数据已成功提交")
+                    else:
+                        print("❌ 提交跑步数据失败")
+                except Exception as e:
+                    print(f"❌ 提交数据时出错: {e}")
                 
         # 显示最终结果
         self.clear_screen()
@@ -739,24 +737,74 @@ class SimpleUI:
         print()
         print("请选择操作:")
         print("1. 开始跑步")
-        print("2. 查看帮助")
-        print("3. 退出程序")
+        print("2. 修改密码")
+        print("3. 查看帮助")
+        print("4. 退出程序")
         print()
         
         while True:
             try:
-                choice = input("请输入选项编号 (1-3): ").strip()
+                choice = input("请输入选项编号 (1-4): ").strip()
                 if choice == "1":
                     return "run"
                 elif choice == "2":
-                    return "help"
+                    return "change_password"
                 elif choice == "3":
+                    return "help"
+                elif choice == "4":
                     return "exit"
                 else:
-                    print("❌ 请输入1、2或3")
+                    print("❌ 请输入1、2、3或4")
             except (EOFError, KeyboardInterrupt):
                 return "exit"
                 
+    def show_change_password(self):
+        """显示修改密码界面"""
+        self.clear_screen()
+        self.print_header()
+        print("🔐 修改密码")
+        print()
+        print("首次使用需要修改密码！")
+        print()
+        print("密码要求:")
+        print("• 长度应大于等于12位")
+        print("• 同时包含大小写字母")
+        print("• 包含数字")
+        print("• 包含特殊符号")
+        print()
+        print("修改密码步骤:")
+        print("1. 点击下方链接打开密码修改页面")
+        print("2. 使用您的手机号登录")
+        print("3. 按照要求设置新密码")
+        print("4. 修改完成后返回程序")
+        print()
+        
+        # 检查是否在支持的环境中
+        import webbrowser
+        import platform
+        
+        try:
+            print("🌐 正在打开密码修改页面...")
+            webbrowser.open("https://edu.ymq.me/wechat/#/wechat/user/mobile/user/reset")
+            print("✅ 密码修改页面已在浏览器中打开")
+        except Exception as e:
+            print("❌ 无法自动打开浏览器")
+            print("请手动访问以下链接:")
+            print("https://edu.ymq.me/wechat/#/wechat/user/mobile/user/reset")
+            print(f"错误信息: {e}")
+        
+        print()
+        print("📱 密码修改页面链接:")
+        print("https://edu.ymq.me/wechat/#/wechat/user/mobile/user/reset")
+        print()
+        print("💡 提示:")
+        print("• 如果页面无法打开，请复制链接到浏览器中访问")
+        print("• 修改密码后，请使用新密码登录程序")
+        print("• 建议使用强密码以确保账号安全")
+        print()
+        
+        input("按Enter键返回主菜单...")
+    
     def show_help(self):
         """显示帮助信息"""
         self.clear_screen()
@@ -785,6 +833,11 @@ class SimpleUI:
         print("   - 按Ctrl+C可以随时停止跑步")
         print("   - 程序会自动处理所有认证和提交过程")
         print()
+        print("6. 密码修改:")
+        print("   - 首次使用需要修改密码")
+        print("   - 密码要求: 12位以上，包含大小写字母、数字和特殊符号")
+        print("   - 修改链接: https://edu.ymq.me/wechat/#/wechat/user/mobile/user/reset")
+        print()
         print("⚠️ 注意事项:")
         print("   - 请确保网络连接正常")
         print("   - 请确保有有效的体测计划")
@@ -807,6 +860,10 @@ class SimpleUI:
                         
                     # 开始跑步
                     self.show_running_screen(config)
+                    
+                elif choice == "change_password":
+                    # 显示修改密码界面
+                    self.show_change_password()
                     
                 elif choice == "help":
                     # 显示帮助

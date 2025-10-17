@@ -109,19 +109,9 @@ class CampusFly:
         }
         
         try:
-            print(f"🔍 发送请求到: {url}")
-            print(f"🔍 请求头: {headers}")
-            print(f"🔍 请求体: {request_json}")
-            
             response = self.session.post(url, data=request_json, headers=headers, timeout=10)
-            
-            print(f"🔍 响应状态码: {response.status_code}")
-            print(f"🔍 响应头: {dict(response.headers)}")
-            
             response.raise_for_status()
             response_data = response.json()
-            
-            print(f"🔍 响应数据: {response_data}")
             return response_data
             
         except requests.exceptions.RequestException as e:
@@ -134,7 +124,6 @@ class CampusFly:
                 "response_status": getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None,
                 "response_text": getattr(e.response, 'text', None) if hasattr(e, 'response') else None
             }
-            print(f"❌ 网络请求错误: {error_info}")
             return error_info
         except json.JSONDecodeError as e:
             error_info = {
@@ -144,7 +133,6 @@ class CampusFly:
                 "url": url,
                 "response_text": response.text if hasattr(response, 'text') else "无法获取响应文本"
             }
-            print(f"❌ JSON解析错误: {error_info}")
             return error_info
         except Exception as e:
             error_info = {
@@ -154,7 +142,6 @@ class CampusFly:
                 "url": url,
                 "request_data": request_body
             }
-            print(f"❌ 未知错误: {error_info}")
             return error_info
     
     def login(self, username: str, password: str) -> Tuple[bool, Optional[str], Dict]:
@@ -168,26 +155,18 @@ class CampusFly:
         }
         
         print(f"🔐 正在登录用户: {username}")
-        print(f"🔍 登录请求数据: {data}")
         response = self.make_request(url, data)
-        
-        print(f"🔍 登录API完整响应: {response}")
         
         if response.get("code") == 1:
             token = response.get("userinfo", {}).get("token")
             if token:
                 print("✅ 登录成功！")
-                print(f"🔍 获取到token: {token[:20]}...")
                 return True, token, response
             else:
                 print("❌ 登录响应中未找到token")
-                print(f"🔍 userinfo内容: {response.get('userinfo', {})}")
                 return False, None, response
         else:
-            print(f"❌ 登录失败")
-            print(f"🔍 错误代码: {response.get('code')}")
-            print(f"🔍 错误消息: {response.get('message', '未知错误')}")
-            print(f"🔍 完整错误响应: {response}")
+            print(f"❌ 登录失败: {response.get('message', '未知错误')}")
             return False, None, response
     
     def query_fitness_plans(self, token: str) -> Tuple[bool, List[Dict], Dict]:
@@ -200,48 +179,31 @@ class CampusFly:
         }
         
         print(f"📋 正在查询体测计划...")
-        print(f"🔍 查询请求数据: {data}")
-        print(f"🔍 使用agencyId: {self.agency_id}")
         response = self.make_request(url, data, token)
-        
-        print(f"🔍 体测计划查询API完整响应: {response}")
         
         if response.get("status") == 0:
             detail = response.get("detail", {})
             current = detail.get("current", [])
             history = detail.get("history", [])
             
-            print(f"🔍 当前计划数量: {len(current)}")
-            print(f"🔍 历史计划数量: {len(history)}")
-            
             # 优先使用当前计划，如果没有则使用历史计划
             all_plans = current + history
             
             if all_plans:
                 print(f"✅ 找到 {len(current)} 个当前计划，{len(history)} 个历史计划")
-                # 显示所有可用计划
-                for i, plan in enumerate(all_plans):
-                    plan_type = "当前" if i < len(current) else "历史"
-                    print(f"  {plan_type}计划: {plan['fitnessName']} (ID: {plan['fitnessId']})")
                 
                 # 优先选择当前计划，与FitnessResolver保持一致
                 if current:
                     selected_plan = current[0]
-                    print(f"🔍 选择当前计划: {selected_plan['fitnessName']} (ID: {selected_plan['fitnessId']})")
                 else:
                     selected_plan = history[0]
-                    print(f"🔍 选择历史计划: {selected_plan['fitnessName']} (ID: {selected_plan['fitnessId']})")
                 
                 return True, [selected_plan], response
             else:
                 print("❌ 未找到体测计划")
-                print(f"🔍 detail内容: {detail}")
                 return False, [], response
         else:
-            print(f"❌ 查询体测计划失败")
-            print(f"🔍 错误状态码: {response.get('status')}")
-            print(f"🔍 错误消息: {response.get('message', '未知错误')}")
-            print(f"🔍 完整错误响应: {response}")
+            print(f"❌ 查询体测计划失败: {response.get('message', '未知错误')}")
             return False, [], response
     
     def verify_token(self, token: str) -> bool:
@@ -351,12 +313,7 @@ class CampusFly:
         data = {"fitnessId": self.auth_info["fitnessId"]}
         
         print("🏃 正在开始跑步...")
-        print(f"🔍 使用fitnessId: {self.auth_info['fitnessId']}")
-        print(f"🔍 使用token: {self.auth_info['token'][:20]}...")
-        
         response = self.make_request(url, data, self.auth_info["token"])
-        
-        print(f"🔍 开始跑步API完整响应: {response}")
         
         if response.get("status") == 0:
             detail = response.get("detail", {})
@@ -364,23 +321,9 @@ class CampusFly:
             self.auth_info["strollRecordId"] = detail.get("strollRecordId", 0)
             
             print("✅ 跑步开始成功")
-            print(f"🔍 获取到gradeType: {self.auth_info['gradeType']}")
-            print(f"🔍 获取到strollRecordId: {self.auth_info['strollRecordId']}")
             return True
         else:
-            print(f"❌ 开始跑步失败")
-            print(f"🔍 错误状态码: {response.get('status')}")
-            print(f"🔍 错误消息: {response.get('message')}")
-            print(f"🔍 完整错误响应: {response}")
-            
-            # 如果有额外的错误信息，也显示出来
-            if 'error_type' in response:
-                print(f"🔍 错误类型: {response['error_type']}")
-            if 'response_status' in response:
-                print(f"🔍 HTTP状态码: {response['response_status']}")
-            if 'response_text' in response:
-                print(f"🔍 原始响应文本: {response['response_text']}")
-                
+            print(f"❌ 开始跑步失败: {response.get('message')}")
             return False
     
     def heartbeat(self, keep_running: bool = True) -> bool:
