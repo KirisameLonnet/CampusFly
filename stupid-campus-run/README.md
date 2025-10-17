@@ -1,119 +1,83 @@
-# 校园跑欺骗程序
+## 快速开始
 
-基于华体运动会逆向分析结果开发的自动化跑步系统。
+### 1. 克隆项目
+```bash
+git clone <repository-url>
+cd stupid-campus-run
+```
 
-## 功能特点
+### 2. 创建虚拟环境
+```bash
+python -m venv venv
+```
 
-- 🎯 **完全基于API**: 直接调用华体运动会API，无需修改客户端
-- 🗺️ **电子围栏合规**: 严格按照7个预定义围栏区域生成路线
-- 🏃‍♂️ **智能路线生成**: 80%轨迹点在围栏内，确保数据有效性
-- 📏 **距离限制**: 自动遵守上海大学8公里限制
-- 🔐 **完整认证流程**: 支持token验证和API签名
+### 3. 激活虚拟环境
+```bash
+# Windows
+venv\Scripts\activate
 
-## 安装依赖
+# macOS/Linux
+source venv/bin/activate
+```
 
+### 4. 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-## 使用方法
+### 5. 运行程序
 
-### 基本用法
+#### 命令行模式
+```bash
+python main.py --username 手机号 --password 密码 --distance 5000
+```
+
+#### 交互式界面
+```bash
+python tui.py
+```
+
+## 参数说明
+
+- `--username`: 华体运动会账号（手机号）
+- `--password`: 账号密码
+- `--distance`: 目标距离（米，默认5000）
+- `--school`: 学校选择（上海大学/上海中医药大学，默认上海大学）
+- `--mode`: 轨迹模式（track/random，默认track）
+
+## 使用示例
 
 ```bash
-python campus_fly_cheat.py --phone 13800138000 --fitness-id YOUR_FITNESS_ID --distance 5000
+# 基本使用
+python main.py --username 13800138000 --password your_password --distance 3000
+
+# 指定学校和模式
+python main.py --username 13800138000 --password your_password --distance 5000 --school 上海大学 --mode track
+
+# 使用交互式界面
+python tui.py
 ```
 
-### 参数说明
+## 注意事项
 
-- `--phone`: 手机号（必填）
-- `--fitness-id`: 体测计划ID（必填）
-- `--distance`: 目标距离，单位米（可选，默认5000米）
+- 请确保网络连接正常
+- 请确保有有效的体测计划
+- 请遵守学校相关规定
+- 程序仅用于学习和研究目的
 
-### 使用步骤
-
-1. **获取体测计划ID**
-   - 登录华体运动会小程序
-   - 从URL参数或开发者工具中获取fitnessId
-
-2. **运行程序**
-   ```bash
-   python campus_fly_cheat.py --phone 13800138000 --fitness-id 12345
-   ```
-
-3. **完成登录**
-   - 程序会显示登录URL
-   - 在浏览器中打开并完成手机号登录
-   - 从浏览器开发者工具中获取token
-
-4. **自动跑步**
-   - 程序会自动生成符合规则的跑步路线
-   - 模拟跑步过程并提交数据
-
-## 技术原理
-
-### API调用流程
-
-1. **Token验证**: `POST /public/token/renewal`
-2. **检查异常**: `POST /checkStrollAbnormal`
-3. **创建记录**: `POST /makeStroll`
-4. **保存数据**: `POST /saveStroll`
-5. **提交记录**: `POST /submitStroll`
-
-### 电子围栏规则
-
-程序严格按照以下7个围栏区域生成路线：
-
-```javascript
-// 上海大学电子围栏坐标
-const geo_fences = [
-  {lat: [31.19141, 31.193705], lng: [121.594352, 121.596808]},
-  {lat: [31.052121, 31.053421], lng: [121.752672, 121.753916]},
-  {lat: [31.221011, 31.222512], lng: [121.630334, 121.632343]},
-  {lat: [31.318217, 31.31997], lng: [121.392548, 121.393845]},
-  {lat: [31.318391, 31.320292], lng: [121.396041, 121.39726]},
-  {lat: [31.275604, 31.277297], lng: [121.456016, 121.457606]},
-  {lat: [31.376768, 31.378306], lng: [121.248733, 121.250344]}
-];
-```
-
-### 数据验证规则
-
-- **轨迹验证**: 超过50%的轨迹点必须在围栏内
-- **距离限制**: 上海大学最大8公里
-- **时间戳**: 使用当前时间戳
-- **签名验证**: MD5签名确保请求合法性
-
-## 安全说明
-
-⚠️ **重要提醒**:
-- 本程序仅用于学习研究目的
-- 请勿用于实际的作弊行为
-- 使用前请确保了解相关法律法规
-- 作者不承担任何法律责任
-
-## 文件结构
+## 项目结构
 
 ```
 stupid-campus-run/
-├── campus_fly_cheat.py    # 主程序文件
-├── requirements.txt       # 依赖文件
-└── README.md             # 说明文档
+├── main.py          # 核心逻辑
+├── tui.py           # 交互式界面
+├── config_manager.py # 配置管理
+├── requirements.txt  # 依赖列表
+└── README.md        # 说明文档
 ```
 
-## 常见问题
+本项目中不少内容借鉴了 [FitnessResolver](https://github.com/ThunderEnvoy/FitnessResolver) 基于tarui的项目，做的相当好
 
-### Q: 如何获取fitnessId？
-A: 登录华体运动会小程序后，从URL参数或开发者工具Network面板中查找。
+## 许可证
 
-### Q: Token在哪里获取？
-A: 在浏览器开发者工具的Application/Storage面板中查找localStorage的token值。
-
-### Q: 程序运行失败怎么办？
-A: 检查网络连接、token有效性、fitnessId是否正确。
-
-## 更新日志
-
-- v1.0.0: 初始版本，支持基本的跑步欺骗功能
-- 基于华体运动会逆向分析结果开发
-- 支持上海大学电子围栏规则
+本项目仅供学习和研究使用，请勿用于商业用途。
