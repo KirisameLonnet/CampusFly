@@ -313,6 +313,290 @@ url: "https://edu.ymq.me/wechat/#/user/mobile/user/mini?agencyId=".concat(t, "&t
 }
 ```
 
+## 用户Token以及两个ID的获取分析 
 
+根据逆向分析，要成功上传跑步数据，需要获取以下三个核心认证信息：
 
-## 用户Token以及两个ID的获取分析
+```javascript
+{
+  token: "用户认证token",        // 通过手机号登录获得
+  fitnessId: "体测计划ID",       // 从API响应中获取  
+  agencyId: "学校机构ID"         // 已知的学校ID
+}
+```
+
+### Python实现代码
+
+**完整的认证信息获取Python脚本**：
+
+```python
+import requests
+import json
+import time
+import hashlib
+from urllib.parse import urlencode
+
+class CampusFlyAuth:
+    def __init__(self):
+        self.session = requests.Session()
+        self.base_urls = {
+            "fitness": "https://fitness.iyundong.me",
+            "fitUrl": "https://edu.ymq.me", 
+            "user": "https://user.iyundong.me",
+            "userymq": "https://user.ymq.me"
+        }
+      
+        # 已知的学校机构ID
+        self.agency_ids = {
+            "上海大学": 1977,
+            "上海中医药大学": 1036
+        }
+  
+    def generate_signature(self, params, timestamp, token):
+        """生成API签名"""
+        # 合并参数
+        all_params = {
+            "snTime": timestamp,
+            "token": token
+        }
+        all_params.update(params)
+      
+        # 按键排序并拼接
+        sorted_keys = sorted(all_params.keys())
+        sign_string = "&".join([f"{key}={all_params[key]}" for key in sorted_keys])
+      
+        # MD5加密
+        return hashlib.md5(sign_string.encode('utf-8')).hexdigest()
+  
+    def make_request(self, url, data, token=""):
+        """发送API请求"""
+        timestamp = int(time.time() * 1000)
+      
+        # 构造请求头
+        headers = {
+            "Accept": "*/*;",
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Sn-Verify": self.generate_signature(data, timestamp, token)
+        }
+      
+        # 构造请求体
+        request_body = {
+            "body": data,
+            "header": {
+                "token": token,
+                "snTime": timestamp,
+                "sn": self.generate_signature(data, timestamp, token),
+                "from": "wx"
+            }
+        }
+      
+        response = self.session.post(url, json=request_body, headers=headers)
+        return response.json()
+  
+    def get_login_url(self, agency_id, environment="true"):
+        """获取登录页面URL"""
+        timestamp = int(time.time() * 1000)
+      
+        if environment == "false":
+            return f"https://edu.iyundong.me/wechat/#/user/mobile/user/mini?agencyId={agency_id}"
+        else:
+            return f"https://edu.ymq.me/wechat/#/user/mobile/user/mini?agencyId={agency_id}&t={timestamp}"
+  
+    def verify_token(self, token):
+        """验证token有效性"""
+        url = f"{self.base_urls['userymq']}/public/token/renewal"
+        data = {"token": token}
+      
+        try:
+            response = self.make_request(url, data, token)
+            return response.get("status") == 0
+        except Exception as e:
+            print(f"Token验证失败: {e}")
+            return False
+  
+    def get_fitness_info(self, token, fitness_id):
+        """获取体测信息"""
+        url = f"{self.base_urls['fitUrl']}/webservice/wechat/student/stroll/makeStroll.do"
+        data = {"fitnessId": fitness_id}
+      
+        try:
+            response = self.make_request(url, data, token)
+            if response.get("status") == 0:
+                return response.get("detail", {})
+            else:
+                print(f"获取体测信息失败: {response.get('message')}")
+                return None
+        except Exception as e:
+            print(f"获取体测信息异常: {e}")
+            return None
+  
+    def check_stroll_abnormal(self, token, fitness_id):
+        """检查跑步异常状态"""
+        url = f"{self.base_urls['fitUrl']}/webservice/wechat/student/stroll/checkStrollAbnormal.do"
+        data = {"fitnessId": fitness_id}
+      
+        try:
+            response = self.make_request(url, data, token)
+            return response
+        except Exception as e:
+            print(f"检查跑步异常失败: {e}")
+            return None
+  
+    def simulate_login_flow(self, phone_number, agency_id, fitness_id):
+        """模拟完整登录流程"""
+        print(f"开始为手机号 {phone_number} 获取认证信息...")
+        print(f"目标学校ID: {agency_id}")
+        print(f"体测计划ID: {fitness_id}")
+      
+        # 步骤1: 获取登录URL
+        login_url = self.get_login_url(agency_id)
+        print(f"登录URL: {login_url}")
+      
+        # 步骤2: 模拟用户登录（实际需要用户手动操作）
+        print("请在浏览器中打开上述URL，完成手机号登录...")
+        print("登录成功后，请从浏览器开发者工具中获取token")
+      
+        # 步骤3: 等待用户输入token
+        token = input("请输入获取到的token: ").strip()
+      
+        if not token:
+            print("未提供token，退出")
+            return None
+      
+        # 步骤4: 验证token
+        print("验证token有效性...")
+        if not self.verify_token(token):
+            print("Token验证失败，请重新登录")
+            return None
+      
+        print("Token验证成功！")
+      
+        # 步骤5: 获取体测信息
+        print("获取体测信息...")
+        fitness_info = self.get_fitness_info(token, fitness_id)
+        if not fitness_info:
+            print("获取体测信息失败")
+            return None
+      
+        # 步骤6: 检查跑步状态
+        print("检查跑步异常状态...")
+        abnormal_check = self.check_stroll_abnormal(token, fitness_id)
+      
+        # 返回完整的认证信息
+        auth_info = {
+            "token": token,
+            "fitnessId": fitness_id,
+            "agencyId": agency_id,
+            "fitnessInfo": fitness_info,
+            "abnormalCheck": abnormal_check,
+            "loginUrl": login_url
+        }
+      
+        print("认证信息获取完成！")
+        return auth_info
+
+# 使用示例
+if __name__ == "__main__":
+    auth = CampusFlyAuth()
+  
+    # 配置参数
+    phone_number = "13800138000"  # 用户手机号
+    agency_id = 1977  # 上海大学
+    fitness_id = "your_fitness_id"  # 需要从API获取
+  
+    # 执行认证流程
+    auth_info = auth.simulate_login_flow(phone_number, agency_id, fitness_id)
+  
+    if auth_info:
+        print("\n=== 认证信息 ===")
+        print(f"Token: {auth_info['token']}")
+        print(f"FitnessId: {auth_info['fitnessId']}")
+        print(f"AgencyId: {auth_info['agencyId']}")
+        print(f"登录URL: {auth_info['loginUrl']}")
+```
+
+**简化的API调用示例**：
+
+```python
+import requests
+import hashlib
+import time
+
+def call_campus_fly_api(api_url, data, token=""):
+    """调用华体运动会API"""
+    timestamp = int(time.time() * 1000)
+  
+    # 生成签名
+    all_params = {"snTime": timestamp, "token": token}
+    all_params.update(data)
+    sorted_keys = sorted(all_params.keys())
+    sign_string = "&".join([f"{key}={all_params[key]}" for key in sorted_keys])
+    signature = hashlib.md5(sign_string.encode('utf-8')).hexdigest()
+  
+    # 构造请求
+    headers = {
+        "Accept": "*/*;",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Sn-Verify": signature
+    }
+  
+    request_body = {
+        "body": data,
+        "header": {
+            "token": token,
+            "snTime": timestamp,
+            "sn": signature,
+            "from": "wx"
+        }
+    }
+  
+    response = requests.post(api_url, json=request_body, headers=headers)
+    return response.json()
+
+# 验证token
+def verify_token(token):
+    url = "https://user.ymq.me/public/token/renewal"
+    data = {"token": token}
+    result = call_campus_fly_api(url, data, token)
+    return result.get("status") == 0
+
+# 获取体测信息
+def get_fitness_info(token, fitness_id):
+    url = "https://edu.ymq.me/webservice/wechat/student/stroll/makeStroll.do"
+    data = {"fitnessId": fitness_id}
+    return call_campus_fly_api(url, data, token)
+
+# 使用示例
+token = "DKLD5A-f0f536d844698ee7b8f7612c82a7ba2230796aa1"
+fitness_id = "your_fitness_id"
+
+if verify_token(token):
+    print("Token有效")
+    fitness_info = get_fitness_info(token, fitness_id)
+    print(f"体测信息: {fitness_info}")
+else:
+    print("Token无效")
+```
+
+**已知的API端点**：
+
+```python
+# API端点配置
+API_ENDPOINTS = {
+    "makeStroll": "https://edu.ymq.me/webservice/wechat/student/stroll/makeStroll.do",
+    "saveStroll": "https://edu.ymq.me/webservice/wechat/student/stroll/saveStroll.do", 
+    "submitStroll": "https://edu.ymq.me/webservice/wechat/student/stroll/submitStroll.do",
+    "checkStrollAbnormal": "https://edu.ymq.me/webservice/wechat/student/stroll/checkStrollAbnormal.do",
+    "renewal": "https://user.ymq.me/public/token/renewal"
+}
+
+# 学校机构ID
+AGENCY_IDS = {
+    "上海大学": 1977,
+    "上海中医药大学": 1036
+}
+```
+
+> 上述Python代码提供了完整的认证信息获取流程，包括token验证、API调用、签名生成等核心功能。使用时需要用户手动完成WebView登录获取token，然后通过代码验证和使用。
+
+至此对于源码分析已经完成，我们可以尝试面向API进行校园飞了

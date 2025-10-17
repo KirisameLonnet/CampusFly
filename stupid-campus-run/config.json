@@ -1,0 +1,65 @@
+{
+  "api_config": {
+    "base_urls": {
+      "fitness": "https://fitness.iyundong.me",
+      "fitUrl": "https://edu.ymq.me",
+      "user": "https://user.iyundong.me",
+      "userymq": "https://user.ymq.me"
+    },
+    "timeout": 10,
+    "retry_count": 3
+  },
+  "school_config": {
+    "agency_id": 1977,
+    "school_name": "上海大学",
+    "max_distance": 8000,
+    "geo_fences": [
+      {
+        "name": "区域1",
+        "lat": [31.19141, 31.193705],
+        "lng": [121.594352, 121.596808]
+      },
+      {
+        "name": "区域2", 
+        "lat": [31.052121, 31.053421],
+        "lng": [121.752672, 121.753916]
+      },
+      {
+        "name": "区域3",
+        "lat": [31.221011, 31.222512],
+        "lng": [121.630334, 121.632343]
+      },
+      {
+        "name": "区域4",
+        "lat": [31.318217, 31.31997],
+        "lng": [121.392548, 121.393845]
+      },
+      {
+        "name": "区域5",
+        "lat": [31.318391, 31.320292],
+        "lng": [121.396041, 121.39726]
+      },
+      {
+        "name": "区域6",
+        "lat": [31.275604, 31.277297],
+        "lng": [121.456016, 121.457606]
+      },
+      {
+        "name": "区域7",
+        "lat": [31.376768, 31.378306],
+        "lng": [121.248733, 121.250344]
+      }
+    ]
+  },
+  "route_config": {
+    "point_interval": 0.0001,
+    "fence_ratio": 0.8,
+    "min_distance": 1000,
+    "max_distance": 8000
+  },
+  "debug": {
+    "verbose": true,
+    "save_route": false,
+    "log_level": "INFO"
+  }
+}
