@@ -1,3 +1,9 @@
+# 关于本项目：
+
+本项目由华体运动会-体育管理小程序逆向源码、stupid-campus-run（校园跑模拟器，跑步模拟器哈，不是刷跑用的），和源码分析组成。
+
+本项目遵循GPLv3协议
+
 # 华体运动会-体育管理的逆向分析
 
 * 有关校园跑，截止至笔者书写时间：2025年10月17日1：36AM，已知的，已上线的业务逻辑如下：
@@ -313,7 +319,7 @@ url: "https://edu.ymq.me/wechat/#/user/mobile/user/mini?agencyId=".concat(t, "&t
 }
 ```
 
-## 用户Token以及两个ID的获取分析 
+## 用户Token以及两个ID的获取分析
 
 根据逆向分析，要成功上传跑步数据，需要获取以下三个核心认证信息：
 
@@ -345,7 +351,7 @@ class CampusFlyAuth:
             "user": "https://user.iyundong.me",
             "userymq": "https://user.ymq.me"
         }
-      
+    
         # 已知的学校机构ID
         self.agency_ids = {
             "上海大学": 1977,
@@ -360,25 +366,25 @@ class CampusFlyAuth:
             "token": token
         }
         all_params.update(params)
-      
+    
         # 按键排序并拼接
         sorted_keys = sorted(all_params.keys())
         sign_string = "&".join([f"{key}={all_params[key]}" for key in sorted_keys])
-      
+    
         # MD5加密
         return hashlib.md5(sign_string.encode('utf-8')).hexdigest()
   
     def make_request(self, url, data, token=""):
         """发送API请求"""
         timestamp = int(time.time() * 1000)
-      
+    
         # 构造请求头
         headers = {
             "Accept": "*/*;",
             "Content-Type": "application/json; charset=UTF-8",
             "X-Sn-Verify": self.generate_signature(data, timestamp, token)
         }
-      
+    
         # 构造请求体
         request_body = {
             "body": data,
@@ -389,14 +395,14 @@ class CampusFlyAuth:
                 "from": "wx"
             }
         }
-      
+    
         response = self.session.post(url, json=request_body, headers=headers)
         return response.json()
   
     def get_login_url(self, agency_id, environment="true"):
         """获取登录页面URL"""
         timestamp = int(time.time() * 1000)
-      
+    
         if environment == "false":
             return f"https://edu.iyundong.me/wechat/#/user/mobile/user/mini?agencyId={agency_id}"
         else:
@@ -406,7 +412,7 @@ class CampusFlyAuth:
         """验证token有效性"""
         url = f"{self.base_urls['userymq']}/public/token/renewal"
         data = {"token": token}
-      
+    
         try:
             response = self.make_request(url, data, token)
             return response.get("status") == 0
@@ -418,7 +424,7 @@ class CampusFlyAuth:
         """获取体测信息"""
         url = f"{self.base_urls['fitUrl']}/webservice/wechat/student/stroll/makeStroll.do"
         data = {"fitnessId": fitness_id}
-      
+    
         try:
             response = self.make_request(url, data, token)
             if response.get("status") == 0:
@@ -434,7 +440,7 @@ class CampusFlyAuth:
         """检查跑步异常状态"""
         url = f"{self.base_urls['fitUrl']}/webservice/wechat/student/stroll/checkStrollAbnormal.do"
         data = {"fitnessId": fitness_id}
-      
+    
         try:
             response = self.make_request(url, data, token)
             return response
@@ -447,41 +453,41 @@ class CampusFlyAuth:
         print(f"开始为手机号 {phone_number} 获取认证信息...")
         print(f"目标学校ID: {agency_id}")
         print(f"体测计划ID: {fitness_id}")
-      
+    
         # 步骤1: 获取登录URL
         login_url = self.get_login_url(agency_id)
         print(f"登录URL: {login_url}")
-      
+    
         # 步骤2: 模拟用户登录（实际需要用户手动操作）
         print("请在浏览器中打开上述URL，完成手机号登录...")
         print("登录成功后，请从浏览器开发者工具中获取token")
-      
+    
         # 步骤3: 等待用户输入token
         token = input("请输入获取到的token: ").strip()
-      
+    
         if not token:
             print("未提供token，退出")
             return None
-      
+    
         # 步骤4: 验证token
         print("验证token有效性...")
         if not self.verify_token(token):
             print("Token验证失败，请重新登录")
             return None
-      
+    
         print("Token验证成功！")
-      
+    
         # 步骤5: 获取体测信息
         print("获取体测信息...")
         fitness_info = self.get_fitness_info(token, fitness_id)
         if not fitness_info:
             print("获取体测信息失败")
             return None
-      
+    
         # 步骤6: 检查跑步状态
         print("检查跑步异常状态...")
         abnormal_check = self.check_stroll_abnormal(token, fitness_id)
-      
+    
         # 返回完整的认证信息
         auth_info = {
             "token": token,
@@ -491,7 +497,7 @@ class CampusFlyAuth:
             "abnormalCheck": abnormal_check,
             "loginUrl": login_url
         }
-      
+    
         print("认证信息获取完成！")
         return auth_info
 

@@ -48,12 +48,6 @@ python tui.py
 ## 使用示例
 
 ```bash
-# 基本使用
-python main.py --username 13800138000 --password your_password --distance 3000
-
-# 指定学校和模式
-python main.py --username 13800138000 --password your_password --distance 5000 --school 上海大学 --mode track
-
 # 使用交互式界面
 python tui.py
 ```
@@ -80,4 +74,4 @@ stupid-campus-run/
 
 ## 许可证
 
-本项目仅供学习和研究使用，请勿用于商业用途。
+本项目完全用于学习逆向工程和网络安全，不可以用于校园跑等任何用途，遵循GPLv3
