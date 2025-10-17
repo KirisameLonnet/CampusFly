@@ -201,8 +201,24 @@ class SimpleUI:
         """验证密码"""
         if not password:
             return False, password, "密码不能为空"
-        if len(password) < 6:
-            return False, password, "密码长度至少6位"
+        if len(password) < 12:
+            return False, password, "密码长度至少12位"
+        
+        # 检查是否包含大小写字母、数字和特殊符号
+        has_upper = any(c.isupper() for c in password)
+        has_lower = any(c.islower() for c in password)
+        has_digit = any(c.isdigit() for c in password)
+        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
+        
+        if not has_upper:
+            return False, password, "密码必须包含大写字母"
+        if not has_lower:
+            return False, password, "密码必须包含小写字母"
+        if not has_digit:
+            return False, password, "密码必须包含数字"
+        if not has_special:
+            return False, password, "密码必须包含特殊符号"
+            
         return True, password, "密码格式正确"
         
     def validate_distance(self, distance_str):
@@ -290,6 +306,17 @@ class SimpleUI:
             if not password and default_password:
                 password = default_password
                 self.add_log(f"使用记忆的密码")
+                
+                # 检查记忆的密码是否符合要求
+                if len(password) < 12:
+                    print("⚠️  记忆的密码不符合新要求（需要12位以上），请重新输入密码")
+                    password = self.get_input_with_validation(
+                        "密码: ", 
+                        self.validate_password,
+                        allow_empty=False
+                    )
+                    if password is None:
+                        return None
             elif not password:
                 print("❌ 密码不能为空")
                 continue
