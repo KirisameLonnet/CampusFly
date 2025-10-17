@@ -159,7 +159,99 @@
 * 在指定区域内结束跑步
 * 每次仅仅能上传8km的有效距离，超过8km自动截断，源码在下方部分
 
+以上内容对虚拟定位跑方案还是比较有价值的，另外跑步开始按钮闪现的BUG目前还没有修复，手够快就还可以点击
+
 ## 跑步数据上传API业务逻辑分析
+
+我们可以看见，API URL是直接硬编码在该程序中的：
+
+核心API域名配置：
+
+```javascript
+var s = {
+  fitness: "https://fitness.iyundong.me",      // 体测服务域名
+  fitUrl: "https://edu.ymq.me",                // 主要API域名
+  user: "https://user.iyundong.me",            // 用户服务域名
+  userymq: "https://user.ymq.me"               // 用户API域名
+};
+```
+
+API接口路径：
+
+```javascript
+var t = l.default.fitUrl,  // 使用硬编码的域名
+  r = {
+    makeStroll: t + "/webservice/wechat/student/stroll/makeStroll.do",
+    saveStroll: t + "/webservice/wechat/student/stroll/saveStroll.do",
+    submitStroll: t + "/webservice/wechat/student/stroll/submitStroll.do",
+    checkStrollAbnormal: t + "/webservice/wechat/student/stroll/checkStrollAbnormal.do",
+    renewal: l.default.userymq + "/public/token/renewal"
+  };
+```
+
+webview页面URL：
+
+```javascript
+// pages/shu/fitnessWeb.js - 上海大学
+url: "https://edu.ymq.me/wechat/#/?agencyId=".concat(1977, "&ismini=true&t=").concat((new Date).getTime())
+
+// pages/shutcm/fitnessWeb.js - 上海中医药大学
+url: "https://edu.ymq.me/wechat/#/?agencyId=".concat(1036, "&ismini=true&t=").concat((new Date).getTime())
+
+// pages/score/score.js - 成绩查询
+url: "https://edu.ymq.me/wechat/#/fitness?stuNo=".concat(t, "&planId=").concat(o)
+
+// pages/login/login.js - 登录页面
+url: "https://edu.ymq.me/wechat/#/user/mobile/user/mini?agencyId=".concat(t, "&t=").concat((new Date).getTime())
+```
+
+其中我们关注如下：
+
+* token续期
+
+  ```javascript
+  // API: POST /public/token/renewal
+  // 域名: https://user.ymq.me
+  // 用途: 验证和续期用户token
+
+  a.default.post(n.default.renewal, {
+    token: o  // 用户token
+  })
+  ```
+* 用户登录
+
+  ```javascript
+  // pages/login/login.js
+  // 通过WebView跳转到登录页面
+
+  // 环境1: 使用edu.iyundong.me
+  url: "https://edu.iyundong.me/wechat/#/user/mobile/user/mini?agencyId=".concat(t)
+
+  // 环境2: 使用edu.ymq.me  
+  url: "https://edu.ymq.me/wechat/#/user/mobile/user/mini?agencyId=".concat(t, "&t=").concat((new Date).getTime())
+
+
+  ```
+* 保存跑步数据
+
+  ```javascript
+  // API: POST /webservice/wechat/student/stroll/saveStroll.do
+  // 域名: https://edu.ymq.me
+  // 用途: 中途保存跑步数据（每10秒调用一次）
+
+  a.default.post(n.default.saveStroll, h)
+  ```
+* 提交跑步记录
+
+  ```javascript
+  // API: POST /webservice/wechat/student/stroll/submitStroll.do
+  // 域名: https://edu.ymq.me
+  // 用途: 最终提交跑步数据
+
+  a.default.post(n.default.submitStroll, i)
+  ```
+
+接下来我们分析一下API结构体
 
 * 上传跑步数据API（submitStroll）需要以下6个核心信息：
 
@@ -210,3 +302,17 @@
 * **strollDetail**: GPS轨迹详情，JSON格式（必填）
 
 想要构造有效的跑步数据，需要确保这6个字段都正确填写，特别是fitnessId和strollDetail这两个关键字段。
+
+因此我们容易知道，想要伪造一次跑步数据上传，就要获得：
+
+```javascript
+{
+  token: "用户认证token",
+  fitnessId: "体测计划ID",
+  agencyId: "学校机构ID"
+}
+```
+
+
+
+## 用户Token以及两个ID的获取分析
