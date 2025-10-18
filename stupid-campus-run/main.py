@@ -39,9 +39,9 @@ class CampusFly:
             "total_circumference": 400,  # 总周长（米）
             "speed": 1000 / 6.5 / 60,  # 配速6.5分钟/公里（米/秒）
             "rotation": 90,  # 跑道旋转角度（度）
-            "enable_noise": True,  # 启用位置噪声
+            "enable_noise": True,  # 启用真实跑步轨迹优化
             "enable_speed_variation": True,  # 启用配速变化
-            "noise_range": 2.0,  # 噪声范围（米）
+            "track_width": 1.22,  # 跑道宽度（米）
             "speed_variation": 0.05  # 配速变化范围（±5%）
         }
         
@@ -296,18 +296,24 @@ class CampusFly:
         base_lat = center_lat + (y_rotated * lat_per_meter) * (180 / math.pi)
         base_lng = center_lng + (x_rotated * lng_per_meter) * (180 / math.pi)
         
-        # 7. 添加自然波动（可选）
+        # 7. 添加真实跑步轨迹优化（可选）
         if add_noise:
-            # 位置微调（±1-3米）
-            noise_x = random.uniform(-2.0, 2.0)  # 米
-            noise_y = random.uniform(-2.0, 2.0)  # 米
+            # 计算跑道宽度方向的偏移（垂直于跑道方向）
+            track_width_offset = self.get_track_width_offset(distance, t)
+            
+            # 计算跑道方向向量（用于垂直偏移）
+            direction_vector = self.get_track_direction_vector(distance, straight_length, band_radius)
+            
+            # 应用跑道宽度偏移
+            offset_x = direction_vector[0] * track_width_offset
+            offset_y = direction_vector[1] * track_width_offset
             
             # 转换为经纬度偏移
-            lat_noise = noise_y * lat_per_meter * (180 / math.pi)
-            lng_noise = noise_x * lng_per_meter * (180 / math.pi)
+            lat_offset = offset_y * lat_per_meter * (180 / math.pi)
+            lng_offset = offset_x * lng_per_meter * (180 / math.pi)
             
-            final_lat = base_lat + lat_noise
-            final_lng = base_lng + lng_noise
+            final_lat = base_lat + lat_offset
+            final_lng = base_lng + lng_offset
         else:
             final_lat = base_lat
             final_lng = base_lng
@@ -317,16 +323,79 @@ class CampusFly:
             "longitude": final_lng
         }
     
-    def get_dynamic_speed(self, base_speed: float = None) -> float:
-        """获取动态配速，添加自然波动"""
+    def get_track_width_offset(self, distance: float, t: int) -> float:
+        """计算跑道宽度方向的偏移，模拟真实跑步轨迹"""
+        # 跑道宽度约1.22米，跑者会在跑道宽度范围内摆动
+        track_width = 1.22
+        
+        # 基于时间和距离的周期性变化，模拟跑步节奏
+        rhythm_factor = math.sin(t * 0.1) * 0.3 + math.cos(t * 0.07) * 0.2
+        
+        # 基于距离的长期变化，模拟跑者在内道和外道之间的切换
+        lane_switch = math.sin(distance * 0.01) * 0.4
+        
+        # 添加随机微调，但幅度很小
+        random_factor = random.uniform(-0.1, 0.1)
+        
+        # 在弯道处增加外倾偏移
+        if distance > 84.39 and distance < 84.39 + math.pi * 36.5:  # 上弯道
+            curve_factor = 0.3
+        elif distance > 2 * 84.39 + math.pi * 36.5:  # 下弯道
+            curve_factor = 0.3
+        else:
+            curve_factor = 0.0
+        
+        # 计算总偏移（米）
+        total_offset = (rhythm_factor + lane_switch + random_factor + curve_factor) * track_width
+        
+        # 限制在跑道宽度范围内
+        return max(-track_width/2, min(track_width/2, total_offset))
+    
+    def get_track_direction_vector(self, distance: float, straight_length: float, band_radius: float) -> Tuple[float, float]:
+        """计算跑道方向向量，用于垂直偏移"""
+        band_circumference = math.pi * band_radius
+        
+        if distance <= straight_length:
+            # 直道：垂直于东西方向（南北方向）
+            return (0, 1)
+        elif distance <= straight_length + band_circumference:
+            # 上弯道：垂直于切线方向
+            arc_distance = distance - straight_length
+            angle = arc_distance / band_radius
+            return (math.sin(angle), -math.cos(angle))
+        elif distance <= 2 * straight_length + band_circumference:
+            # 左侧直道：垂直于南北方向（东西方向）
+            return (1, 0)
+        else:
+            # 下弯道：垂直于切线方向
+            arc_distance = distance - (2 * straight_length + band_circumference)
+            angle = arc_distance / band_radius
+            return (-math.sin(angle), math.cos(angle))
+    
+    def get_dynamic_speed(self, base_speed: float = None, t: int = 0) -> float:
+        """获取动态配速，添加真实跑步节奏变化"""
         if base_speed is None:
             base_speed = self.track_config["speed"]
         
         if self.track_config.get("enable_speed_variation", True):
-            # 添加±5%的随机波动
+            # 基础变化范围
             variation = self.track_config.get("speed_variation", 0.05)
-            noise_factor = random.uniform(1 - variation, 1 + variation)
-            return base_speed * noise_factor
+            
+            # 跑步节奏变化（基于时间）
+            rhythm_factor = math.sin(t * 0.05) * 0.02 + math.cos(t * 0.03) * 0.01
+            
+            # 疲劳因子（随着时间增加，速度略有下降）
+            fatigue_factor = 1.0 - (t / 3600) * 0.05  # 1小时后速度下降5%
+            fatigue_factor = max(0.9, fatigue_factor)  # 最多下降10%
+            
+            # 随机微调
+            random_factor = random.uniform(-variation, variation)
+            
+            # 计算最终速度
+            total_factor = 1.0 + rhythm_factor + random_factor
+            final_speed = base_speed * total_factor * fatigue_factor
+            
+            return final_speed
         else:
             return base_speed
     
@@ -385,8 +454,8 @@ class CampusFly:
             return False
     
     def heartbeat(self, keep_running: bool = True) -> bool:
-        """心跳包（实时更新跑步数据）- 完全按照FitnessResolver的逻辑，添加优化"""
-        # 生成当前位置，使用优化参数
+        """心跳包（实时更新跑步数据）- 完全按照FitnessResolver的逻辑，添加真实跑步优化"""
+        # 生成当前位置，使用真实跑步轨迹优化
         pos = self.get_track_position_with_rotation(
             self.running_state["time"],
             add_noise=self.track_config.get("enable_noise", True)
@@ -604,8 +673,8 @@ def main():
     parser.add_argument("--distance", type=int, default=5000, help="目标距离(米，默认5000)")
     parser.add_argument("--school", choices=["上海大学", "上海中医药大学"], default="上海大学", help="学校选择")
     parser.add_argument("--mode", choices=["track", "random"], default="track", help="轨迹模式：track=跑道轨迹，random=随机轨迹")
-    parser.add_argument("--enable-noise", action="store_true", default=True, help="启用位置噪声优化（默认启用）")
-    parser.add_argument("--disable-noise", action="store_true", help="禁用位置噪声优化")
+    parser.add_argument("--enable-noise", action="store_true", default=True, help="启用真实跑步轨迹优化（默认启用）")
+    parser.add_argument("--disable-noise", action="store_true", help="禁用真实跑步轨迹优化")
     parser.add_argument("--enable-speed-variation", action="store_true", default=True, help="启用配速变化优化（默认启用）")
     parser.add_argument("--disable-speed-variation", action="store_true", help="禁用配速变化优化")
     
