@@ -38,7 +38,11 @@ class CampusFly:
             "band_radius": 36.5,  # 弯道半径（米）
             "total_circumference": 400,  # 总周长（米）
             "speed": 1000 / 6.5 / 60,  # 配速6.5分钟/公里（米/秒）
-            "rotation": 90  # 跑道旋转角度（度）
+            "rotation": 90,  # 跑道旋转角度（度）
+            "enable_noise": True,  # 启用位置噪声
+            "enable_speed_variation": True,  # 启用配速变化
+            "noise_range": 2.0,  # 噪声范围（米）
+            "speed_variation": 0.05  # 配速变化范围（±5%）
         }
         
         # 上海大学电子围栏坐标（7个区域）
@@ -67,6 +71,16 @@ class CampusFly:
             "distance": 0,
             "time": 0,
             "is_running": False
+        }
+        
+        # 自适应心跳包配置
+        self.heartbeat_config = {
+            "base_interval": 1.0,  # 基础间隔（秒）
+            "min_interval": 0.8,   # 最小间隔（秒）
+            "max_interval": 3.0,   # 最大间隔（秒）
+            "current_interval": 1.0,  # 当前间隔（秒）
+            "response_times": [],  # 响应时间记录
+            "max_response_history": 10  # 最大响应时间记录数
         }
     
     def generate_signature(self, params: Dict, timestamp: int, token: str) -> str:
@@ -213,9 +227,11 @@ class CampusFly:
         return True
     
     def get_track_position_with_rotation(self, t: int, center_lat: float = None, center_lng: float = None, 
-                                       rotation: float = None, offset_x: float = 0, offset_y: float = 0) -> Dict:
+                                       rotation: float = None, offset_x: float = 0, offset_y: float = 0,
+                                       add_noise: bool = True) -> Dict:
         """
         支持旋转的跑道位置计算函数（完全按照FitnessResolver的算法）
+        添加自然波动优化，使轨迹更真实
         """
         if center_lat is None:
             center_lat = self.track_config["center_lat"]
@@ -276,9 +292,51 @@ class CampusFly:
         lng_per_meter = 1 / (earth_radius * math.cos(rad_lat))  # 1米对应的经度差（弧度）
         lat_per_meter = 1 / earth_radius  # 1米对应的纬度差（弧度）
 
+        # 计算基础坐标
+        base_lat = center_lat + (y_rotated * lat_per_meter) * (180 / math.pi)
+        base_lng = center_lng + (x_rotated * lng_per_meter) * (180 / math.pi)
+        
+        # 7. 添加自然波动（可选）
+        if add_noise:
+            # 位置微调（±1-3米）
+            noise_x = random.uniform(-2.0, 2.0)  # 米
+            noise_y = random.uniform(-2.0, 2.0)  # 米
+            
+            # 转换为经纬度偏移
+            lat_noise = noise_y * lat_per_meter * (180 / math.pi)
+            lng_noise = noise_x * lng_per_meter * (180 / math.pi)
+            
+            final_lat = base_lat + lat_noise
+            final_lng = base_lng + lng_noise
+        else:
+            final_lat = base_lat
+            final_lng = base_lng
+
         return {
-            "latitude": center_lat + (y_rotated * lat_per_meter) * (180 / math.pi),
-            "longitude": center_lng + (x_rotated * lng_per_meter) * (180 / math.pi)
+            "latitude": final_lat,
+            "longitude": final_lng
+        }
+    
+    def get_dynamic_speed(self, base_speed: float = None) -> float:
+        """获取动态配速，添加自然波动"""
+        if base_speed is None:
+            base_speed = self.track_config["speed"]
+        
+        if self.track_config.get("enable_speed_variation", True):
+            # 添加±5%的随机波动
+            variation = self.track_config.get("speed_variation", 0.05)
+            noise_factor = random.uniform(1 - variation, 1 + variation)
+            return base_speed * noise_factor
+        else:
+            return base_speed
+    
+    def get_track_variation(self) -> Dict:
+        """获取轨迹变化参数，使每次运行都有所不同"""
+        return {
+            "center_offset_lat": random.uniform(-0.0001, 0.0001),  # ±10米
+            "center_offset_lng": random.uniform(-0.0001, 0.0001),  # ±10米
+            "rotation_offset": random.uniform(-5, 5),  # ±5度
+            "speed_variation": random.uniform(0.95, 1.05)  # ±5%速度变化
         }
     
     def calculate_distance(self, lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -327,9 +385,12 @@ class CampusFly:
             return False
     
     def heartbeat(self, keep_running: bool = True) -> bool:
-        """心跳包（实时更新跑步数据）- 完全按照FitnessResolver的逻辑"""
-        # 生成当前位置
-        pos = self.get_track_position_with_rotation(self.running_state["time"])
+        """心跳包（实时更新跑步数据）- 完全按照FitnessResolver的逻辑，添加优化"""
+        # 生成当前位置，使用优化参数
+        pos = self.get_track_position_with_rotation(
+            self.running_state["time"],
+            add_noise=self.track_config.get("enable_noise", True)
+        )
         
         # 计算距离 - 按照FitnessResolver的逻辑
         if len(self.running_state["positions"]) > 0:
@@ -356,6 +417,36 @@ class CampusFly:
         self.update_display()
         
         return response.get("status") == 0
+    
+    def adaptive_heartbeat(self, keep_running: bool = True) -> bool:
+        """自适应心跳包，根据网络状况调整频率"""
+        # 记录响应时间
+        start_time = time.time()
+        
+        # 执行心跳包
+        success = self.heartbeat(keep_running)
+        
+        # 计算响应时间
+        response_time = time.time() - start_time
+        
+        # 记录响应时间
+        self.heartbeat_config["response_times"].append(response_time)
+        if len(self.heartbeat_config["response_times"]) > self.heartbeat_config["max_response_history"]:
+            self.heartbeat_config["response_times"].pop(0)
+        
+        # 根据响应时间调整下次间隔
+        if response_time > 2.0:  # 响应慢
+            self.heartbeat_config["current_interval"] = min(
+                self.heartbeat_config["max_interval"],
+                self.heartbeat_config["current_interval"] * 1.2
+            )
+        elif response_time < 0.5:  # 响应快
+            self.heartbeat_config["current_interval"] = max(
+                self.heartbeat_config["min_interval"],
+                self.heartbeat_config["current_interval"] * 0.9
+            )
+        
+        return success
     
     def end_running(self) -> bool:
         """结束跑步"""
@@ -476,8 +567,9 @@ class CampusFly:
             
             try:
                 while self.running_state["distance"] < target_distance and self.running_state["is_running"]:
-                    self.heartbeat(keep_running=True)
-                    time.sleep(1)  # 每秒更新一次
+                    self.adaptive_heartbeat(keep_running=True)
+                    # 使用自适应间隔
+                    time.sleep(self.heartbeat_config["current_interval"])
                     
                     # 检查是否达到目标距离
                     if self.running_state["distance"] >= target_distance:
@@ -512,11 +604,21 @@ def main():
     parser.add_argument("--distance", type=int, default=5000, help="目标距离(米，默认5000)")
     parser.add_argument("--school", choices=["上海大学", "上海中医药大学"], default="上海大学", help="学校选择")
     parser.add_argument("--mode", choices=["track", "random"], default="track", help="轨迹模式：track=跑道轨迹，random=随机轨迹")
+    parser.add_argument("--enable-noise", action="store_true", default=True, help="启用位置噪声优化（默认启用）")
+    parser.add_argument("--disable-noise", action="store_true", help="禁用位置噪声优化")
+    parser.add_argument("--enable-speed-variation", action="store_true", default=True, help="启用配速变化优化（默认启用）")
+    parser.add_argument("--disable-speed-variation", action="store_true", help="禁用配速变化优化")
     
     args = parser.parse_args()
     
     # 创建程序实例
     campus_fly = CampusFly()
+    
+    # 配置优化选项
+    if args.disable_noise:
+        campus_fly.track_config["enable_noise"] = False
+    if args.disable_speed_variation:
+        campus_fly.track_config["enable_speed_variation"] = False
     
     # 运行程序
     success = campus_fly.run_campus_fly(
