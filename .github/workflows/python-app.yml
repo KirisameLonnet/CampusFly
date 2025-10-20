@@ -187,8 +187,8 @@ jobs:
 
   # Create release assets
   release:
-    # MODIFIED: Run even if previous jobs fail, but only on release events
-    if: github.event_name == 'release' && always()
+    # MODIFIED: Run even if previous jobs fail, for both push and release events
+    if: always() && (github.event_name == 'push' || github.event_name == 'release')
     needs: [build-native, cross-compile-linux-arm]
     runs-on: ubuntu-22.04
     # ADDED: Permissions required to upload assets to a GitHub Release.
@@ -224,4 +224,23 @@ jobs:
         files: release/*
         # ADDED: Fail softly if upload fails
         fail_on_unmatched_files: false
+        # Auto-create a "latest" release for push events, use actual tag for release events
+        tag_name: ${{ github.event_name == 'release' && github.ref || 'latest' }}
+        name: ${{ github.event_name == 'release' && github.event.release.name || 'Latest Development Build' }}
+        body: |
+          自动构建于 ${{ github.event.head_commit.timestamp }}
+          
+          提交信息: ${{ github.event.head_commit.message }}
+          提交SHA: ${{ github.sha }}
+          
+          ## 下载说明
+          请根据您的操作系统选择对应的二进制文件：
+          - Windows: `CampusFly-windows-x86_64.exe`
+          - macOS Intel: `CampusFly-macos-x86_64`
+          - macOS Apple Silicon: `CampusFly-macos-arm64`
+          - Linux x86_64: `CampusFly-linux-x86_64`
+          - Linux ARM64: `CampusFly-linux-arm64`
+          - Linux ARMv7: `CampusFly-linux-armv7`
+        prerelease: ${{ github.event_name == 'push' }}
+        draft: false
 
