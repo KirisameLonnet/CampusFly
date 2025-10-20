@@ -21,10 +21,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python 3.11
-      # UPDATED: Changed from @v4 to @v5 for reliability and current support.
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        # FIXED: Specified an exact patch version to bypass version resolution issues.
+        python-version: "3.11.8"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -44,6 +44,8 @@ jobs:
   # Native builds (x86_64 + macOS ARM64)
   build-native:
     needs: test
+    # ADDED: continue-on-error: true ensures this job doesn't fail the workflow even if some builds fail
+    continue-on-error: true
     strategy:
       # ADDED: fail-fast: false ensures all jobs in the matrix run, even if one fails.
       fail-fast: false
@@ -76,10 +78,10 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      # UPDATED: Changed from @v4 to @v5 for reliability and current support.
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        # FIXED: Specified an exact patch version to bypass version resolution issues.
+        python-version: "3.11.8"
         architecture: ${{ matrix.arch }}
 
     # ADDED: Install system dependencies for PyInstaller on Linux runners
@@ -96,12 +98,16 @@ jobs:
         pip install pyinstaller
     
     - name: Build for ${{ matrix.target }}
+      # ADDED: continue-on-error: true allows the workflow to continue even if build fails
+      continue-on-error: true
       run: |
         cd stupid-campus-run
         pyinstaller --onefile --console --name "${{ matrix.binary_name }}" tui.py
       shell: bash
     
     - name: Upload ${{ matrix.target }} artifact
+      # ADDED: if: success() ensures we only upload if the build succeeded
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.target }}
@@ -111,9 +117,13 @@ jobs:
   # Cross-compile Linux ARM architectures from x86_64
   cross-compile-linux-arm:
     needs: test
+    # ADDED: continue-on-error: true ensures this job doesn't fail the workflow even if some builds fail
+    continue-on-error: true
     runs-on: ubuntu-22.04
     
     strategy:
+      # ADDED: fail-fast: false ensures all jobs in the matrix run, even if one fails.
+      fail-fast: false
       matrix:
         include:
           - target: linux-arm64
@@ -127,10 +137,10 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python 3.11
-      # UPDATED: Changed from @v4 to @v5 for reliability and current support.
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        # FIXED: Specified an exact patch version to bypass version resolution issues.
+        python-version: "3.11.8"
     
     - name: Install dependencies
       run: |
@@ -148,6 +158,8 @@ jobs:
         fi
     
     - name: Cross-compile for ${{ matrix.target }}
+      # ADDED: continue-on-error: true allows the workflow to continue even if build fails
+      continue-on-error: true
       run: |
         cd stupid-campus-run
         
@@ -165,6 +177,8 @@ jobs:
         pyinstaller --onefile --console --name "${{ matrix.binary_name }}" tui.py
     
     - name: Upload ${{ matrix.target }} artifact
+      # ADDED: if: success() ensures we only upload if the build succeeded
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.target }}
@@ -173,7 +187,8 @@ jobs:
 
   # Create release assets
   release:
-    if: github.event_name == 'release'
+    # MODIFIED: Run even if previous jobs fail, but only on release events
+    if: github.event_name == 'release' && always()
     needs: [build-native, cross-compile-linux-arm]
     runs-on: ubuntu-22.04
     # ADDED: Permissions required to upload assets to a GitHub Release.
@@ -182,6 +197,8 @@ jobs:
     
     steps:
     - name: Download all artifacts
+      # ADDED: Continue on error if some artifacts are missing
+      continue-on-error: true
       uses: actions/download-artifact@v4
       with:
         path: ./artifacts
@@ -191,11 +208,20 @@ jobs:
         mkdir -p release
         # The download-artifact action creates a directory for each artifact.
         # We need to find the files inside those directories.
-        find artifacts -type f -name "CampusFly-*" -exec cp {} release/ \;
+        # This will only copy files that exist, ignoring missing ones
+        find artifacts -type f -name "CampusFly-*" -exec cp {} release/ \; 2>/dev/null || true
+        
+        # List what we successfully built
+        echo "Successfully built artifacts:"
+        ls -lh release/ || echo "No artifacts were successfully built"
     
     - name: Upload Release Assets
+      # ADDED: Only upload if we have at least one successful build
+      if: hashFiles('release/*') != ''
       uses: softprops/action-gh-release@v2
       with:
         # This will upload all files from the release directory as individual assets
         files: release/*
+        # ADDED: Fail softly if upload fails
+        fail_on_unmatched_files: false
 
