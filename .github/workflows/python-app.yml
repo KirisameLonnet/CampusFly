@@ -23,7 +23,7 @@ jobs:
     - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.13.4"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -40,21 +40,17 @@ jobs:
         cd stupid-campus-run
         pytest --tb=short || echo "No tests found, continuing..."
 
-  # Multi-platform build job
-  build:
+  # Native builds (x86_64 + macOS ARM64)
+  build-native:
     needs: test
     strategy:
       matrix:
         include:
-          # Windows builds
+          # Windows x86_64
           - os: windows-latest
             arch: x86_64
             target: windows-x86_64
             binary_name: CampusFly-windows-x86_64.exe
-          - os: windows-latest
-            arch: arm64
-            target: windows-arm64
-            binary_name: CampusFly-windows-arm64.exe
             
           # macOS builds
           - os: macos-latest
@@ -66,15 +62,11 @@ jobs:
             target: macos-arm64
             binary_name: CampusFly-macos-arm64
             
-          # Linux builds
+          # Linux x86_64
           - os: ubuntu-latest
             arch: x86_64
             target: linux-x86_64
             binary_name: CampusFly-linux-x86_64
-          - os: ubuntu-latest
-            arch: arm64
-            target: linux-arm64
-            binary_name: CampusFly-linux-arm64
     runs-on: ${{ matrix.os }}
     
     steps:
@@ -83,7 +75,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.13.4"
         architecture: ${{ matrix.arch }}
     
     - name: Install dependencies
@@ -105,19 +97,28 @@ jobs:
         path: stupid-campus-run/dist/${{ matrix.binary_name }}
         retention-days: 30
 
-  # Cross-compile ARMv7 from ARM64
-  cross-compile-armv7:
+  # Cross-compile Linux ARM architectures from x86_64
+  cross-compile-linux-arm:
     needs: test
     runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        include:
+          - target: linux-arm64
+            binary_name: CampusFly-linux-arm64
+            arch: arm64
+          - target: linux-armv7
+            binary_name: CampusFly-linux-armv7
+            arch: armv7
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python 3.11 ARM64
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
-        architecture: arm64
+        python-version: "3.13.4"
     
     - name: Install dependencies
       run: |
@@ -128,31 +129,44 @@ jobs:
     - name: Install cross-compilation tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+        elif [ "${{ matrix.arch }}" = "armv7" ]; then
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+        fi
     
-    - name: Cross-compile for ARMv7
+    - name: Cross-compile for ${{ matrix.target }}
       run: |
         cd stupid-campus-run
-        # Set up cross-compilation environment
-        export CC=arm-linux-gnueabihf-gcc
-        export CXX=arm-linux-gnueabihf-g++
-        export AR=arm-linux-gnueabihf-ar
-        export STRIP=arm-linux-gnueabihf-strip
         
-        # Build with PyInstaller for ARMv7
-        pyinstaller --onefile --console --name "CampusFly-linux-armv7" tui.py
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          # Cross-compile for Linux ARM64
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
+          export AR=aarch64-linux-gnu-ar
+          export STRIP=aarch64-linux-gnu-strip
+        elif [ "${{ matrix.arch }}" = "armv7" ]; then
+          # Cross-compile for Linux ARMv7
+          export CC=arm-linux-gnueabihf-gcc
+          export CXX=arm-linux-gnueabihf-g++
+          export AR=arm-linux-gnueabihf-ar
+          export STRIP=arm-linux-gnueabihf-strip
+        fi
+        
+        # Build with PyInstaller
+        pyinstaller --onefile --console --name "CampusFly-${{ matrix.target }}" tui.py
     
-    - name: Upload ARMv7 artifact
+    - name: Upload ${{ matrix.target }} artifact
       uses: actions/upload-artifact@v4
       with:
-        name: linux-armv7
-        path: stupid-campus-run/dist/CampusFly-linux-armv7
+        name: ${{ matrix.target }}
+        path: stupid-campus-run/dist/${{ matrix.binary_name }}
         retention-days: 30
 
   # Create release assets
   release:
     if: github.event_name == 'release'
-    needs: [build, cross-compile-armv7]
+    needs: [build-native, cross-compile-linux-arm]
     runs-on: ubuntu-latest
     
     steps:
