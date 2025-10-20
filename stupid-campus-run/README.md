@@ -43,7 +43,6 @@ python tui.py
 - `--password`: 账号密码
 - `--distance`: 目标距离（米，默认5000）
 - `--school`: 学校选择（上海大学/上海中医药大学，默认上海大学）
-- `--mode`: 轨迹模式（track/random，默认track）
 
 ## 使用示例
 

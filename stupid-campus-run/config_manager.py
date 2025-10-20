@@ -16,7 +16,6 @@ def load_config():
         "last_password": "",
         "last_school": "上海大学",
         "last_distance": 5000,
-        "last_mode": "track",
         "remember_credentials": False
     }
     
@@ -53,7 +52,6 @@ def show_config(config):
     print(f"  密码: {'已保存（加密）' if config.get('last_password') else '未保存'}")
     print(f"  学校: {config.get('last_school', '未设置')}")
     print(f"  距离: {config.get('last_distance', '未设置')}米")
-    print(f"  模式: {config.get('last_mode', '未设置')}")
     print(f"  记住凭据: {'是' if config.get('remember_credentials', False) else '否'}")
 
 def clear_config():
@@ -62,7 +60,6 @@ def clear_config():
         "last_username": "",
         "last_school": "上海大学",
         "last_distance": 5000,
-        "last_mode": "track",
         "remember_credentials": False
     }
     if save_config(config):
@@ -82,11 +79,10 @@ def main():
         print("3. 修改密码")
         print("4. 修改学校")
         print("5. 修改距离")
-        print("6. 修改模式")
-        print("7. 清空配置")
-        print("8. 退出")
+        print("6. 清空配置")
+        print("7. 退出")
         
-        choice = input("\n请输入选项编号 (1-8): ").strip()
+        choice = input("\n请输入选项编号 (1-7): ").strip()
         
         if choice == "1":
             show_config(config)
@@ -135,27 +131,13 @@ def main():
                 print("❌ 请输入有效的数字")
                 
         elif choice == "6":
-            print("请选择模式:")
-            print("1. 跑道轨迹")
-            print("2. 随机轨迹")
-            mode_choice = input("请输入模式编号: ").strip()
-            if mode_choice == "1":
-                config["last_mode"] = "track"
-                save_config(config)
-            elif mode_choice == "2":
-                config["last_mode"] = "random"
-                save_config(config)
-            else:
-                print("❌ 无效选择")
-                
-        elif choice == "7":
             confirm = input("确认清空所有配置? (y/n): ").strip().lower()
             if confirm == 'y':
                 clear_config()
             else:
                 print("❌ 操作已取消")
                 
-        elif choice == "8":
+        elif choice == "7":
             print("👋 再见!")
             break
             

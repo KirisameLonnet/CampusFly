@@ -14,6 +14,7 @@ import json
 import logging
 import base64
 import hashlib
+import queue
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -32,6 +33,12 @@ class SimpleUI:
         self.current_status = "准备中"
         self.config_file = "user_config.json"
         self.log_file = f"campus_fly_{datetime.now().strftime('%Y%m%d')}.log"
+        
+        # 线程同步机制
+        self.status_lock = threading.Lock()
+        self.running_thread = None
+        self.shutdown_event = threading.Event()
+        self.status_queue = queue.Queue()
         
         # 设置日志
         self.setup_logging()
@@ -67,43 +74,51 @@ class SimpleUI:
         self.logger.info("校园跑程序启动")
         
     def generate_password_key(self) -> str:
-        """生成密码加密密钥（基于机器特征）"""
+        """生成密码加密密钥（基于机器特征和随机数）"""
         import platform
         import getpass
+        import secrets
         
-        # 使用机器特征生成密钥
+        # 使用机器特征和随机数生成更安全的密钥
         machine_info = f"{platform.node()}{platform.system()}{getpass.getuser()}"
-        key = hashlib.sha256(machine_info.encode()).digest()[:16]  # 使用16字节密钥
-        return base64.b64encode(key).decode()
+        random_salt = secrets.token_hex(16)  # 32字节随机盐
+        combined_info = f"{machine_info}{random_salt}"
+        
+        # 使用PBKDF2生成32字节密钥，然后直接用于Fernet
+        key = hashlib.pbkdf2_hmac('sha256', combined_info.encode(), b'campus_fly_salt', 100000)
+        # Fernet需要32字节的base64编码密钥
+        return base64.urlsafe_b64encode(key).decode()
     
     def encrypt_password(self, password: str) -> str:
         """加密密码"""
         try:
             from cryptography.fernet import Fernet
-            key = base64.urlsafe_b64encode(self.password_key.encode()[:32].ljust(32, b'0'))
-            f = Fernet(key)
+            # 直接使用base64编码的密钥
+            f = Fernet(self.password_key.encode())
             encrypted = f.encrypt(password.encode())
-            return base64.b64encode(encrypted).decode()
+            return base64.urlsafe_b64encode(encrypted).decode()
         except ImportError:
-            # 如果没有cryptography库，使用简单的base64编码（不够安全，但可用）
-            self.logger.warning("cryptography库未安装，使用简单编码（不够安全）")
-            return base64.b64encode(password.encode()).decode()
+            self.logger.error("cryptography库未安装，无法安全加密密码")
+            raise ImportError("cryptography库是必需的，请运行: pip install cryptography")
+        except Exception as e:
+            self.logger.error(f"密码加密失败: {e}")
+            raise
     
     def decrypt_password(self, encrypted_password: str) -> str:
         """解密密码"""
         try:
             from cryptography.fernet import Fernet
-            key = base64.urlsafe_b64encode(self.password_key.encode()[:32].ljust(32, b'0'))
-            f = Fernet(key)
-            encrypted_bytes = base64.b64decode(encrypted_password.encode())
+            # 直接使用base64编码的密钥
+            f = Fernet(self.password_key.encode())
+            encrypted_bytes = base64.urlsafe_b64decode(encrypted_password.encode())
             decrypted = f.decrypt(encrypted_bytes)
             return decrypted.decode()
         except ImportError:
-            # 如果没有cryptography库，使用简单的base64解码
-            return base64.b64decode(encrypted_password.encode()).decode()
+            self.logger.error("cryptography库未安装，无法解密密码")
+            raise ImportError("cryptography库是必需的，请运行: pip install cryptography")
         except Exception as e:
             self.logger.error(f"密码解密失败: {e}")
-            return ""
+            raise
     
     def load_user_config(self) -> Dict[str, Any]:
         """加载用户配置"""
@@ -112,7 +127,6 @@ class SimpleUI:
             "last_password": "",  # 加密存储的密码
             "last_school": "上海大学",
             "last_distance": 5000,
-            "last_mode": "track",
             "remember_credentials": False
         }
         
@@ -124,6 +138,17 @@ class SimpleUI:
                     for key, value in default_config.items():
                         if key not in config:
                             config[key] = value
+                    
+                    # 检查密码是否可以解密，如果不能则清除
+                    if config.get("remember_credentials", False) and config.get("last_password"):
+                        try:
+                            self.decrypt_password(config["last_password"])
+                        except Exception as e:
+                            self.logger.warning(f"已保存的密码无法解密，清除密码: {e}")
+                            config["last_password"] = ""
+                            config["remember_credentials"] = False
+                            self.save_user_config(config)
+                    
                     return config
             except Exception as e:
                 self.logger.warning(f"加载配置文件失败: {e}")
@@ -146,14 +171,26 @@ class SimpleUI:
         
     def signal_handler(self, signum, frame):
         """信号处理器"""
+        print(f"正在关闭进程")
+        
+        # 设置关闭事件
+        self.shutdown_event.set()
+        
         if self.running:
-            print("\n\n⏹️ 检测到中断信号，正在停止跑步...")
+            print("正在停止跑步...")
             self.running = False
             if hasattr(self.campus_fly, 'running_state'):
                 self.campus_fly.running_state["is_running"] = False
-        else:
-            print("\n\n👋 再见!")
-            sys.exit(0)
+        
+        # 等待线程结束
+        if self.running_thread and self.running_thread.is_alive():
+            print("等待后台线程结束...")
+            self.running_thread.join(timeout=5)
+            if self.running_thread.is_alive():
+                print("⚠️ 后台线程未能在5秒内结束，强制退出")
+        
+        print("👋 再见!")
+        sys.exit(0)
         
     def clear_screen(self):
         """清屏"""
@@ -170,89 +207,48 @@ class SimpleUI:
         print("=" * 60)
         
     def add_log(self, message, level="INFO"):
-        """添加日志消息"""
-        timestamp = time.strftime('%H:%M:%S')
-        log_message = f"[{timestamp}] {message}"
-        self.log_messages.append(log_message)
-        print(log_message)
-        
-        # 记录到日志文件
-        if hasattr(self, 'logger'):
-            if level == "ERROR":
-                self.logger.error(message)
-            elif level == "WARNING":
-                self.logger.warning(message)
-            elif level == "DEBUG":
-                self.logger.debug(message)
-            else:
-                self.logger.info(message)
-        
-    def validate_phone(self, phone):
-        """验证手机号格式"""
-        if not phone:
-            return False, phone, "手机号不能为空"
-        if not phone.isdigit():
-            return False, phone, "手机号只能包含数字"
-        if len(phone) != 11:
-            return False, phone, "手机号必须是11位数字"
-        return True, phone, "手机号格式正确"
-        
-    def validate_password(self, password):
-        """验证密码"""
-        if not password:
-            return False, password, "密码不能为空"
-        if len(password) < 12:
-            return False, password, "密码长度至少12位"
-        
-        # 检查是否包含大小写字母、数字和特殊符号
-        has_upper = any(c.isupper() for c in password)
-        has_lower = any(c.islower() for c in password)
-        has_digit = any(c.isdigit() for c in password)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
-        
-        if not has_upper:
-            return False, password, "密码必须包含大写字母"
-        if not has_lower:
-            return False, password, "密码必须包含小写字母"
-        if not has_digit:
-            return False, password, "密码必须包含数字"
-        if not has_special:
-            return False, password, "密码必须包含特殊符号"
+        """添加日志消息（线程安全）"""
+        with self.status_lock:
+            timestamp = time.strftime('%H:%M:%S')
+            log_message = f"[{timestamp}] {message}"
+            self.log_messages.append(log_message)
+            print(log_message)
             
-        return True, password, "密码格式正确"
-        
-    def validate_distance(self, distance_str):
-        """验证距离输入"""
-        if not distance_str:
-            return True, 5000, "使用默认距离5000米"
-        try:
-            distance = int(distance_str)
-            if distance < 100:
-                return False, 0, "距离不能少于100米"
-            if distance > 20000:
-                return False, 0, "距离不能超过20000米"
-            return True, distance, "距离设置成功"
-        except ValueError:
-            return False, 0, "距离必须是数字"
-            
-    def get_input_with_validation(self, prompt, validator, error_msg="输入无效", allow_empty=False):
-        """获取带验证的输入"""
-        while True:
-            try:
-                value = input(prompt).strip()
-                
-                # 如果允许空值且输入为空，直接返回空字符串
-                if allow_empty and not value:
-                    return ""
-                
-                is_valid, result, message = validator(value)
-                if is_valid:
-                    print(f"✅ {message}")
-                    return result
+            # 记录到日志文件
+            if hasattr(self, 'logger'):
+                if level == "ERROR":
+                    self.logger.error(message)
+                elif level == "WARNING":
+                    self.logger.warning(message)
+                elif level == "DEBUG":
+                    self.logger.debug(message)
                 else:
-                    print(f"❌ {message}")
-            except (EOFError, KeyboardInterrupt):
-                return None
+                    self.logger.info(message)
+    
+    def update_status(self, status):
+        """更新状态"""
+        with self.status_lock:
+            self.current_status = status
+            self.status_queue.put(status)
+    
+    def get_current_status(self):
+        """获取当前状态"""
+        with self.status_lock:
+            return self.current_status
+        
+            
+    def get_input_with_validation(self, prompt, error_msg="输入无效", allow_empty=False):
+        """获取输入（无验证）"""
+        try:
+            value = input(prompt).strip()
+            
+            # 如果允许空值且输入为空，直接返回空字符串
+            if allow_empty and not value:
+                return ""
+            
+            return value
+        except (EOFError, KeyboardInterrupt):
+            return None
                 
     def show_login_screen(self):
         """显示登录界面"""
@@ -269,7 +265,6 @@ class SimpleUI:
             # 获取用户名
             username = self.get_input_with_validation(
                 username_prompt, 
-                self.validate_phone,
                 allow_empty=True
             )
             if username is None:
@@ -289,14 +284,18 @@ class SimpleUI:
                 try:
                     default_password = self.decrypt_password(self.user_config["last_password"])
                     password_prompt = f"密码 [已记忆]: "
-                except:
+                except Exception as e:
+                    self.logger.warning(f"密码解密失败，清除已保存的密码: {e}")
+                    # 清除无效的密码
+                    self.user_config["last_password"] = ""
+                    self.user_config["remember_credentials"] = False
+                    self.save_user_config(self.user_config)
                     password_prompt = "密码: "
             else:
                 password_prompt = "密码: "
             
             password = self.get_input_with_validation(
                 password_prompt, 
-                self.validate_password,
                 allow_empty=True
             )
             if password is None:
@@ -312,7 +311,6 @@ class SimpleUI:
                     print("⚠️  记忆的密码不符合新要求（需要12位以上），请重新输入密码")
                     password = self.get_input_with_validation(
                         "密码: ", 
-                        self.validate_password,
                         allow_empty=False
                     )
                     if password is None:
@@ -353,7 +351,6 @@ class SimpleUI:
             distance_prompt = f"请输入跑步距离(米，默认{last_distance}): "
             distance = self.get_input_with_validation(
                 distance_prompt,
-                self.validate_distance,
                 allow_empty=True
             )
             if distance is None:
@@ -363,40 +360,24 @@ class SimpleUI:
             if not distance and last_distance:
                 distance = last_distance
                 self.add_log(f"使用记忆的距离: {distance}米")
-                
-            # 选择模式
-            print("\n请选择轨迹模式:")
-            print("1. 跑道轨迹（推荐，配速6.5分钟/公里）")
-            print("2. 随机轨迹")
-            
-            # 显示记忆的模式
-            last_mode = self.user_config.get("last_mode", "track")
-            default_mode_choice = "1" if last_mode == "track" else "2"
-            
-            while True:
+            else:
+                # 转换距离为整数
                 try:
-                    mode_choice = input(f"请输入模式编号 (默认{default_mode_choice}): ").strip()
-                    if not mode_choice:
-                        mode_choice = default_mode_choice
-                        self.add_log(f"使用记忆的模式: {last_mode}")
-                    
-                    if mode_choice == "1":
-                        mode = "track"
-                        break
-                    elif mode_choice == "2":
-                        mode = "random"
-                        break
-                    else:
-                        print("❌ 请输入1或2")
-                except (EOFError, KeyboardInterrupt):
-                    return None
+                    distance = int(distance) if distance else last_distance
+                except ValueError:
+                    print("❌ 距离必须是数字，使用默认距离")
+                    distance = last_distance
+                
+            # 使用跑道轨迹模式
+            mode = "track"
+            self.add_log("使用跑道轨迹模式")
             
             # 确认配置
             print(f"\n📋 配置确认:")
             print(f"  用户名: {username}")
             print(f"  学校: {school}")
             print(f"  距离: {distance}米")
-            print(f"  模式: {'跑道轨迹' if mode == 'track' else '随机轨迹'}")
+            print(f"  模式: 跑道轨迹")
             
             # 询问是否保存配置
             save_config = input("\n是否保存此配置供下次使用? (y/n) [默认y]: ").strip().lower()
@@ -413,15 +394,19 @@ class SimpleUI:
                     "last_username": username,
                     "last_school": school,
                     "last_distance": distance,
-                    "last_mode": mode,
                     "remember_credentials": remember_password == 'y'
                 }
                 
                 # 如果选择记住密码，加密保存
                 if remember_password == 'y':
-                    encrypted_password = self.encrypt_password(password)
-                    config_to_save["last_password"] = encrypted_password
-                    self.add_log("密码已加密保存")
+                    try:
+                        encrypted_password = self.encrypt_password(password)
+                        config_to_save["last_password"] = encrypted_password
+                        self.add_log("密码已加密保存")
+                    except Exception as e:
+                        self.add_log(f"密码加密失败: {e}")
+                        config_to_save["last_password"] = ""
+                        config_to_save["remember_credentials"] = False
                 else:
                     # 清除已保存的密码
                     config_to_save["last_password"] = ""
@@ -438,8 +423,7 @@ class SimpleUI:
                     "username": username,
                     "password": password,
                     "school": school,
-                    "distance": distance,
-                    "mode": mode
+                    "distance": distance
                 }
             elif confirm == 'n':
                 continue
@@ -540,9 +524,14 @@ class SimpleUI:
                 ]
                 
                 for i, (step_name, step_desc) in enumerate(preparation_steps, 1):
-                    self.current_status = step_name
+                    self.update_status(step_name)
                     self.show_operation_progress(f"前期准备 - {step_name}", i, len(preparation_steps), step_desc)
                     time.sleep(0.3)  # 减少延迟，让进度条更流畅
+                    
+                    # 检查是否被中断
+                    if self.shutdown_event.is_set():
+                        self.update_status("已中断")
+                        return
                 
                 # 步骤1: 初始化
                 if config["school"] in self.campus_fly.agency_ids:
@@ -556,19 +545,19 @@ class SimpleUI:
                         config["password"]
                     )
                     if len(login_result) != 3:
-                        self.current_status = "登录失败"
+                        self.update_status("登录失败")
                         return
                     success, token, response = login_result
                     
                 except Exception as e:
                     self.logger.error(f"登录异常: {str(e)}", exc_info=True)
-                    self.current_status = "登录失败"
+                    self.update_status("登录失败")
                     return
                     
                 if not success:
                     error_msg = response.get('message', '未知错误') if response else '登录失败'
                     self.logger.error(f"登录失败: {error_msg}")
-                    self.current_status = "登录失败"
+                    self.update_status("登录失败")
                     return
                 
                 self.campus_fly.auth_info["token"] = token
@@ -578,19 +567,19 @@ class SimpleUI:
                 try:
                     plans_result = self.campus_fly.query_fitness_plans(token)
                     if len(plans_result) != 3:
-                        self.current_status = "查询失败"
+                        self.update_status("查询失败")
                         return
                     success, plans, response = plans_result
                     
                 except Exception as e:
                     self.logger.error(f"查询体测计划异常: {str(e)}", exc_info=True)
-                    self.current_status = "查询失败"
+                    self.update_status("查询失败")
                     return
                     
                 if not success or not plans:
                     error_msg = response.get('message', '未找到体测计划') if response else '未找到体测计划'
                     self.logger.error(f"未找到体测计划: {error_msg}")
-                    self.current_status = "无体测计划"
+                    self.update_status("无体测计划")
                     return
                 
                 # 选择体测计划
@@ -601,21 +590,21 @@ class SimpleUI:
                 # 步骤4: 开始跑步
                 if not self.campus_fly.start_running():
                     self.logger.error("开始跑步失败")
-                    self.current_status = "开始失败"
+                    self.update_status("开始失败")
                     return
                 
                 self.logger.info("跑步开始成功")
                 
-                mode_text = "跑道轨迹" if config["mode"] == "track" else "随机轨迹"
-                self.logger.info(f"使用{mode_text}模式，目标距离: {config['distance']}米")
+                self.logger.info(f"使用跑道轨迹模式，目标距离: {config['distance']}米")
                 
                 # 模拟跑步过程
                 self.campus_fly.running_state["is_running"] = True
                 self.running = True
-                self.current_status = "跑步中"
+                self.update_status("跑步中")
                 
                 while (self.campus_fly.running_state["distance"] < config["distance"] and 
-                       self.campus_fly.running_state["is_running"] and self.running):
+                       self.campus_fly.running_state["is_running"] and self.running and 
+                       not self.shutdown_event.is_set()):
                     
                     # 更新跑步数据
                     self.campus_fly.heartbeat(keep_running=True)
@@ -625,13 +614,13 @@ class SimpleUI:
                         break
                 
                 # 步骤5: 结束跑步
-                self.current_status = "结束跑步"
+                self.update_status("结束跑步")
                 self.show_operation_progress("结束跑步", 5, 5, "正在提交跑步数据...")
                 time.sleep(0.5)
                 
                 if self.campus_fly.end_running():
                     self.logger.info("校园跑完成并成功提交")
-                    self.current_status = "完成"
+                    self.update_status("完成")
                     
                     # 记录跑步统计
                     if hasattr(self.campus_fly, 'running_state'):
@@ -643,19 +632,18 @@ class SimpleUI:
                         self.logger.info(f"跑步统计: {stats}")
                 else:
                     self.logger.error("提交跑步数据失败")
-                    self.current_status = "提交失败"
+                    self.update_status("提交失败")
                     
             except Exception as e:
                 self.logger.error(f"程序执行异常: {str(e)}", exc_info=True)
-                self.current_status = "异常"
+                self.update_status("异常")
             finally:
                 self.running = False
                 self.logger.info("跑步程序结束")
                 
-        # 启动后台线程
-        thread = threading.Thread(target=run_campus_fly)
-        thread.daemon = True
-        thread.start()
+        # 启动后台线程（非daemon线程）
+        self.running_thread = threading.Thread(target=run_campus_fly, name="CampusFlyRunner")
+        self.running_thread.start()
         
         # 显示跑步状态
         self.show_running_status(config["distance"])
@@ -673,9 +661,10 @@ class SimpleUI:
     def show_running_status(self, target_distance):
         """显示跑步状态"""
         try:
-            while self.running or self.current_status in ["完成", "提交失败", "异常"]:
+            while self.running or self.get_current_status() in ["完成", "提交失败", "异常"]:
                 # 根据状态显示不同界面
-                if self.current_status == "跑步中" and hasattr(self.campus_fly, 'running_state') and self.campus_fly.running_state["time"] > 0:
+                current_status = self.get_current_status()
+                if current_status == "跑步中" and hasattr(self.campus_fly, 'running_state') and self.campus_fly.running_state["time"] > 0:
                     # 显示跑步进度条
                     current_time = self.campus_fly.running_state["time"]
                     current_distance = self.campus_fly.running_state["distance"]
@@ -702,16 +691,19 @@ class SimpleUI:
                         "无体测计划": "❌",
                         "开始失败": "❌",
                         "提交失败": "❌",
-                        "异常": "💥"
+                        "异常": "💥",
+                        "已中断": "⏹️"
                     }
                     
-                    print(f"{status_emoji.get(self.current_status, '🔄')} 状态: {self.current_status}")
+                    print(f"{status_emoji.get(current_status, '🔄')} 状态: {current_status}")
                     print()
                     
                     # 显示状态信息
-                    if self.current_status == "完成":
+                    if current_status == "完成":
                         print("🎉 跑步完成！数据已成功提交")
-                    elif self.current_status in ["登录失败", "查询失败", "无体测计划", "开始失败", "提交失败", "异常"]:
+                    elif current_status == "已中断":
+                        print("⏹️ 跑步已被用户中断")
+                    elif current_status in ["登录失败", "查询失败", "无体测计划", "开始失败", "提交失败", "异常"]:
                         print(f"❌ 操作失败，请检查网络连接和账号信息")
                     else:
                         print("请稍候...")
@@ -741,7 +733,8 @@ class SimpleUI:
         self.clear_screen()
         self.print_header()
         
-        if self.current_status == "完成":
+        final_status = self.get_current_status()
+        if final_status == "完成":
             print("🎉 校园跑完成！")
             if hasattr(self.campus_fly, 'running_state'):
                 time_str = self.campus_fly.format_time(self.campus_fly.running_state["time"])
@@ -750,8 +743,15 @@ class SimpleUI:
                 print(f"总时长: {time_str}")
                 print(f"总距离: {distance_km:.2f}km")
                 print(f"平均配速: {pace:.2f}min/km")
+        elif final_status == "已中断":
+            print("⏹️ 跑步已被用户中断")
+            if hasattr(self.campus_fly, 'running_state') and self.campus_fly.running_state["time"] > 0:
+                time_str = self.campus_fly.format_time(self.campus_fly.running_state["time"])
+                distance_km = self.campus_fly.running_state["distance"] / 1000
+                print(f"已跑时长: {time_str}")
+                print(f"已跑距离: {distance_km:.2f}km")
         else:
-            print(f"❌ 跑步未完成，状态: {self.current_status}")
+            print(f"❌ 跑步未完成，状态: {final_status}")
             
         self.print_footer()
         input("按Enter键返回主菜单...")
@@ -850,11 +850,10 @@ class SimpleUI:
         print()
         print("3. 跑步设置:")
         print("   - 距离: 100-20000米")
-        print("   - 模式: 跑道轨迹或随机轨迹")
+        print("   - 模式: 跑道轨迹")
         print()
         print("4. 轨迹模式:")
         print("   - 跑道轨迹: 基于标准400米跑道，配速6.5分钟/公里")
-        print("   - 随机轨迹: 基于电子围栏生成随机路线")
         print()
         print("5. 操作说明:")
         print("   - 按Ctrl+C可以随时停止跑步")

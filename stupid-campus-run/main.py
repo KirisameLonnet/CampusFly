@@ -70,7 +70,8 @@ class CampusFly:
             "positions": [],
             "distance": 0,
             "time": 0,
-            "is_running": False
+            "is_running": False,
+            "start_time": 0  # 记录开始时间
         }
         
         # 自适应心跳包配置
@@ -84,7 +85,7 @@ class CampusFly:
         }
     
     def generate_signature(self, params: Dict, timestamp: int, token: str) -> str:
-        """生成API签名"""
+        """生成API签名（使用MD5）"""
         all_params = {
             "snTime": timestamp,
             "token": token
@@ -119,7 +120,7 @@ class CampusFly:
         headers = {
             "Accept": "*/*;",
             "Content-Type": "application/json; charset=UTF-8",
-            "x-sn-verify": request_signature  # 注意是小写
+            "x-sn-verify": request_signature
         }
         
         try:
@@ -153,8 +154,7 @@ class CampusFly:
                 "status": -1,
                 "message": f"未知错误: {str(e)}",
                 "error_type": "UnknownError",
-                "url": url,
-                "request_data": request_body
+                "url": url
             }
             return error_info
     
@@ -455,6 +455,14 @@ class CampusFly:
     
     def heartbeat(self, keep_running: bool = True) -> bool:
         """心跳包（实时更新跑步数据）- 完全按照FitnessResolver的逻辑，添加真实跑步优化"""
+        # 计算实际经过的时间
+        current_time = time.time()
+        if self.running_state["start_time"] == 0:
+            self.running_state["start_time"] = current_time
+            self.running_state["time"] = 0
+        else:
+            self.running_state["time"] = int(current_time - self.running_state["start_time"])
+        
         # 生成当前位置，使用真实跑步轨迹优化
         pos = self.get_track_position_with_rotation(
             self.running_state["time"],
@@ -473,7 +481,6 @@ class CampusFly:
         
         # 添加位置点
         self.running_state["positions"].append(pos)
-        self.running_state["time"] += 1
         
         # 构造数据
         data = self.construct_running_data()
@@ -580,7 +587,7 @@ class CampusFly:
         return f"{hour_str}:{minute_str}:{second_str}"
     
     def run_campus_fly(self, username: str, password: str, target_distance: int = 5000, 
-                      school: str = "上海大学", mode: str = "track"):
+                      school: str = "上海大学"):
         """运行校园跑程序"""
         print("=" * 60)
         print("🏃‍♂️ 校园跑程序启动")
@@ -588,7 +595,7 @@ class CampusFly:
         print(f"用户名: {username}")
         print(f"目标距离: {target_distance/1000:.1f}km")
         print(f"学校: {school}")
-        print(f"模式: {'跑道轨迹' if mode == 'track' else '随机轨迹'}")
+        print(f"模式: 跑道轨迹")
         print("=" * 60)
         
         # 设置学校ID
@@ -625,14 +632,11 @@ class CampusFly:
             
             # 步骤4: 模拟跑步过程
             print(f"\n🏃 开始模拟跑步，目标距离: {target_distance/1000:.1f}km")
-            if mode == "track":
-                print("💡 使用跑道轨迹生成算法，配速6.5分钟/公里")
-            else:
-                print("💡 使用随机轨迹生成算法")
+            print("💡 使用跑道轨迹生成算法，配速6.5分钟/公里")
             print("按 Ctrl+C 可以提前结束跑步")
             
             self.running_state["is_running"] = True
-            start_time = time.time()
+            self.running_state["start_time"] = 0  # 重置开始时间，让heartbeat重新计算
             
             try:
                 while self.running_state["distance"] < target_distance and self.running_state["is_running"]:
@@ -672,7 +676,6 @@ def main():
     parser.add_argument("--password", required=True, help="密码")
     parser.add_argument("--distance", type=int, default=5000, help="目标距离(米，默认5000)")
     parser.add_argument("--school", choices=["上海大学", "上海中医药大学"], default="上海大学", help="学校选择")
-    parser.add_argument("--mode", choices=["track", "random"], default="track", help="轨迹模式：track=跑道轨迹，random=随机轨迹")
     parser.add_argument("--enable-noise", action="store_true", default=True, help="启用真实跑步轨迹优化（默认启用）")
     parser.add_argument("--disable-noise", action="store_true", help="禁用真实跑步轨迹优化")
     parser.add_argument("--enable-speed-variation", action="store_true", default=True, help="启用配速变化优化（默认启用）")
@@ -694,8 +697,7 @@ def main():
         username=args.username,
         password=args.password,
         target_distance=args.distance,
-        school=args.school,
-        mode=args.mode
+        school=args.school
     )
     
     sys.exit(0 if success else 1)
