@@ -17,13 +17,13 @@ permissions:
 jobs:
   # Test and lint job
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.13.2
+    - name: Set up Python 3.13
       uses: actions/setup-python@v4
       with:
-        python-version: "3.13.2"
+        python-version: "3.13"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -63,7 +63,7 @@ jobs:
             binary_name: CampusFly-macos-arm64
             
           # Linux x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             arch: x86_64
             target: linux-x86_64
             binary_name: CampusFly-linux-x86_64
@@ -75,7 +75,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.13.2"
+        python-version: "3.13"
         architecture: ${{ matrix.arch }}
     
     - name: Install dependencies
@@ -100,7 +100,7 @@ jobs:
   # Cross-compile Linux ARM architectures from x86_64
   cross-compile-linux-arm:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     strategy:
       matrix:
@@ -115,10 +115,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python 3.13.2
+    - name: Set up Python 3.13
       uses: actions/setup-python@v4
       with:
-        python-version: "3.13.2"
+        python-version: "3.13"
     
     - name: Install dependencies
       run: |
@@ -167,7 +167,7 @@ jobs:
   release:
     if: github.event_name == 'release'
     needs: [build-native, cross-compile-linux-arm]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Download all artifacts
