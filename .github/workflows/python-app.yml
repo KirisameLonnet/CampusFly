@@ -20,10 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.13.4
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
-        python-version: "3.13.4"
+        python-version: "3.11"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -75,10 +75,6 @@ jobs:
             arch: arm64
             target: linux-arm64
             binary_name: CampusFly-linux-arm64
-          - os: ubuntu-latest
-            arch: armv7
-            target: linux-armv7
-            binary_name: CampusFly-linux-armv7
     runs-on: ${{ matrix.os }}
     
     steps:
@@ -87,7 +83,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.13.4"
+        python-version: "3.11"
         architecture: ${{ matrix.arch }}
     
     - name: Install dependencies
@@ -109,10 +105,54 @@ jobs:
         path: stupid-campus-run/dist/${{ matrix.binary_name }}
         retention-days: 30
 
+  # Cross-compile ARMv7 from ARM64
+  cross-compile-armv7:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11 ARM64
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+        architecture: arm64
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r stupid-campus-run/requirements.txt
+        pip install pyinstaller
+    
+    - name: Install cross-compilation tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+    
+    - name: Cross-compile for ARMv7
+      run: |
+        cd stupid-campus-run
+        # Set up cross-compilation environment
+        export CC=arm-linux-gnueabihf-gcc
+        export CXX=arm-linux-gnueabihf-g++
+        export AR=arm-linux-gnueabihf-ar
+        export STRIP=arm-linux-gnueabihf-strip
+        
+        # Build with PyInstaller for ARMv7
+        pyinstaller --onefile --console --name "CampusFly-linux-armv7" tui.py
+    
+    - name: Upload ARMv7 artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-armv7
+        path: stupid-campus-run/dist/CampusFly-linux-armv7
+        retention-days: 30
+
   # Create release assets
   release:
     if: github.event_name == 'release'
-    needs: build
+    needs: [build, cross-compile-armv7]
     runs-on: ubuntu-latest
     
     steps:
