@@ -1,39 +1,140 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+# Multi-platform build workflow for CampusFly
+# Builds binaries for Windows x86_64, macOS ARM64/x86_64, Linux ARMv7/ARMv8a/x86_64
 
-name: Python application
+name: Multi-Platform Build
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-
+  # Test and lint job
+  test:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python 3.10
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v4
       with:
         python-version: "3.10"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        if [ -f stupid-campus-run/requirements.txt ]; then pip install -r stupid-campus-run/requirements.txt; fi
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 stupid-campus-run/ --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        flake8 stupid-campus-run/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
+        cd stupid-campus-run
         pytest
+
+  # Multi-platform build job
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            arch: x86_64
+            target: windows-x86_64
+            binary_name: CampusFly-windows-x86_64.exe
+          - os: windows-latest
+            arch: arm64
+            target: windows-arm64
+            binary_name: CampusFly-windows-arm64.exe
+            
+          # macOS builds
+          - os: macos-latest
+            arch: x86_64
+            target: macos-x86_64
+            binary_name: CampusFly-macos-x86_64
+          - os: macos-latest
+            arch: arm64
+            target: macos-arm64
+            binary_name: CampusFly-macos-arm64
+            
+          # Linux builds
+          - os: ubuntu-latest
+            arch: x86_64
+            target: linux-x86_64
+            binary_name: CampusFly-linux-x86_64
+          - os: ubuntu-latest
+            arch: arm64
+            target: linux-arm64
+            binary_name: CampusFly-linux-arm64
+          - os: ubuntu-latest
+            arch: armv7
+            target: linux-armv7
+            binary_name: CampusFly-linux-armv7
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+        architecture: ${{ matrix.arch }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r stupid-campus-run/requirements.txt
+        pip install pyinstaller
+    
+    - name: Build for ${{ matrix.target }}
+      run: |
+        cd stupid-campus-run
+        pyinstaller --onefile --console --name "CampusFly-${{ matrix.target }}" tui.py
+      shell: bash
+    
+    - name: Upload ${{ matrix.target }} artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.target }}
+        path: stupid-campus-run/dist/${{ matrix.binary_name }}
+        retention-days: 30
+
+  # Create release assets
+  release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+    
+    - name: Create release archive
+      run: |
+        mkdir -p release
+        find artifacts -name "CampusFly-*" -type f -exec cp {} release/ \;
+        cd release
+        zip -r ../CampusFly-binaries.zip .
+        tar -czf ../CampusFly-binaries.tar.gz .
+    
+    - name: Upload release assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./CampusFly-binaries.zip
+        asset_name: CampusFly-binaries.zip
+        asset_content_type: application/zip
