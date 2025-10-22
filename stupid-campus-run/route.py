@@ -378,6 +378,57 @@ class RealisticRunner:
         speed_variation = 1.0 + random.uniform(-0.05, 0.05)
         current_speed *= speed_variation
         
+        # 5. 更新累计距离
+        distance_delta = current_speed * dt
+        self.cumulative_distance += distance_delta
+        
+        # 6. 更新车道偏移（平滑漂移）
+        if not self.cutting_corner:
+            self._update_lane_offset(dt)
+        
+        # 7. 检查是否触发抄近道（可以在弯道或直道触发）
+        if not self.cutting_corner and \
+           (self.cumulative_distance - self.last_corner_cut_distance) > 300:  # 至少间隔300米
+            
+            distance_in_lap = self.cumulative_distance % self.track.total_circumference
+            can_cut = False
+            
+            # 情况1：在弯道中段（25%-75%位置）
+            if self.track.is_in_curve(self.cumulative_distance):
+                if self.track.straight_length < distance_in_lap <= self.track.straight_length + self.track.band_circumference:
+                    # 上弯道
+                    curve_progress = (distance_in_lap - self.track.straight_length) / self.track.band_circumference
+                else:
+                    # 下弯道
+                    curve_progress = (distance_in_lap - 2 * self.track.straight_length - self.track.band_circumference) / self.track.band_circumference
+                
+                if 0.25 <= curve_progress <= 0.75:
+                    can_cut = True
+            
+            # 情况2：在直道中段（20%-80%位置）- 可以斜穿到对面
+            else:
+                if distance_in_lap <= self.track.straight_length:
+                    # 右侧直道
+                    straight_progress = distance_in_lap / self.track.straight_length
+                    if 0.2 <= straight_progress <= 0.8:
+                        can_cut = True
+                elif self.track.straight_length + self.track.band_circumference < distance_in_lap <= 2 * self.track.straight_length + self.track.band_circumference:
+                    # 左侧直道
+                    straight_distance = distance_in_lap - (self.track.straight_length + self.track.band_circumference)
+                    straight_progress = straight_distance / self.track.straight_length
+                    if 0.2 <= straight_progress <= 0.8:
+                        can_cut = True
+            
+            # 触发抄近道
+            if can_cut and random.random() < self.corner_cut_probability * dt:
+                self._start_cutting_corner()
+        
+        # 8. 更新位置
+        if self.cutting_corner:
+            self._update_cutting_corner(dt, distance_delta)
+        else:
+            self._update_normal_position()
+    
     def _update_walking_to_track(self, dt: float):
         """更新走向跑道的过程"""
         # 计算路径总长度
@@ -414,45 +465,6 @@ class RealisticRunner:
                 self.true_y = p1[1] + (p2[1] - p1[1]) * local_progress
             else:
                 self.true_x, self.true_y = self.walking_path_points[target_index]
-    
-    def _trigger_rest(self):
-            can_cut = False
-            
-            # 情况1：在弯道中段（25%-75%位置）
-            if self.track.is_in_curve(self.cumulative_distance):
-                if self.track.straight_length < distance_in_lap <= self.track.straight_length + self.track.band_circumference:
-                    # 上弯道
-                    curve_progress = (distance_in_lap - self.track.straight_length) / self.track.band_circumference
-                else:
-                    # 下弯道
-                    curve_progress = (distance_in_lap - 2 * self.track.straight_length - self.track.band_circumference) / self.track.band_circumference
-                
-                if 0.25 <= curve_progress <= 0.75:
-                    can_cut = True
-            
-            # 情况2：在直道中段（20%-80%位置）- 可以斜穿到对面
-            else:
-                if distance_in_lap <= self.track.straight_length:
-                    # 右侧直道
-                    straight_progress = distance_in_lap / self.track.straight_length
-                    if 0.2 <= straight_progress <= 0.8:
-                        can_cut = True
-                elif self.track.straight_length + self.track.band_circumference < distance_in_lap <= 2 * self.track.straight_length + self.track.band_circumference:
-                    # 左侧直道
-                    straight_distance = distance_in_lap - (self.track.straight_length + self.track.band_circumference)
-                    straight_progress = straight_distance / self.track.straight_length
-                    if 0.2 <= straight_progress <= 0.8:
-                        can_cut = True
-            
-            # 触发抄近道
-            if can_cut and random.random() < self.corner_cut_probability * dt:
-                self._start_cutting_corner()
-        
-        # 7. 更新位置
-        if self.cutting_corner:
-            self._update_cutting_corner(dt, distance_delta)
-        else:
-            self._update_normal_position()
     
     def _trigger_rest(self):
         """触发休息"""

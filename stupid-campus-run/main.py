@@ -14,7 +14,7 @@ class CampusFly:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.104 Mobile Safari/537.36 MicroMessenger/8.0.30.2260(0x28001E57) Process/tools WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64'
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.104 Mobile Safari/537.36 MicroMessenger/8.0.30.2260(0x28001E57) Process/tools WeChat/arm64 Weixin NetType/5G Language/zh_CN ABI/arm64'
         })
         
         # API配置
