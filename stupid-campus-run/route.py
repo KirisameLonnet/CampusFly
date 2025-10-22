@@ -641,7 +641,18 @@ class RealisticRunner:
             # 二次贝塞尔曲线公式
             x = (1-t)**2 * start[0] + 2*(1-t)*t * control_x + t**2 * end[0]
             y = (1-t)**2 * start[1] + 2*(1-t)*t * control_y + t**2 * end[1]
-            self.corner_path_points.append((x, y))
+            
+            # 添加柏林噪声，使路径更自然
+            # 使用累计距离作为噪声输入，确保平滑连续
+            noise_input = self.cumulative_distance + i * 0.5
+            noise_x = self.lane_noise.noise(noise_input) * 0.8  # ±0.8米的横向波动
+            noise_y = self.lane_noise.noise(noise_input + 100) * 0.8  # ±0.8米的纵向波动
+            
+            # 在路径点接近起点和终点时减小噪声（避免突变）
+            fade_factor = min(t, 1 - t) * 2  # 在起点和终点处衰减到0
+            fade_factor = min(1.0, fade_factor)
+            
+            self.corner_path_points.append((x + noise_x * fade_factor, y + noise_y * fade_factor))
     
     def _update_cutting_corner(self, dt: float, distance_delta: float):
         """更新抄近道过程中的位置（沿曲线）"""
