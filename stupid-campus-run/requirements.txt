@@ -1,3 +1,5 @@
 requests>=2.25.1
 cryptography>=3.4.8
 pyinstaller>=5.0
+matplotlib>=3.3.0
+numpy>=1.19.5

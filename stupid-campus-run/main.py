@@ -7,13 +7,14 @@ import random
 from typing import Dict, List, Tuple, Optional
 import argparse
 import sys
+from route import RouteGenerator
 
 class CampusFly:
     
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15'
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/96.0.4664.104 Mobile Safari/537.36 MicroMessenger/8.0.30.2260(0x28001E57) Process/tools WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64'
         })
         
         # API配置
@@ -30,7 +31,7 @@ class CampusFly:
         self.agency_id = 1977  # 默认上海大学
         self.max_distance = 8000  # 8公里限制
         
-        # 狠狠的抄冰火的跑道参数
+        # 跑道配置（传递给 route.py 的 RouteGenerator）
         self.track_config = {
             "center_lat": (31.318217 + 31.31997) / 2,  # 跑道中心纬度
             "center_lng": (121.392548 + 121.393845) / 2,  # 跑道中心经度
@@ -39,10 +40,12 @@ class CampusFly:
             "total_circumference": 400,  # 总周长（米）
             "speed": 1000 / 6.5 / 60,  # 配速6.5分钟/公里（米/秒）
             "rotation": 90,  # 跑道旋转角度（度）
-            "enable_noise": True,  # 启用真实跑步轨迹优化
-            "enable_speed_variation": True,  # 启用配速变化
-            "track_width": 1.22,  # 跑道宽度（米）
-            "speed_variation": 0.05  # 配速变化范围（±5%）
+            # 三层模拟系统配置
+            "enable_realistic_simulation": True,  # 启用真实三层模拟
+            "gps_sampling_rate": 1.0,  # GPS采样率（秒）
+            "gps_noise_std": 4.5,  # GPS噪声标准差（米）
+            "gps_drift_factor": 0.95,  # GPS漂移因子（0-1）
+            "simulation_dt": 0.1,  # 模拟时间步长（秒）
         }
         
         # 上海大学电子围栏坐标（7个区域）
@@ -83,6 +86,9 @@ class CampusFly:
             "response_times": [],  # 响应时间记录
             "max_response_history": 10  # 最大响应时间记录数
         }
+        
+        # 初始化路线生成器
+        self.route_generator = RouteGenerator(self.track_config)
     
     def generate_signature(self, params: Dict, timestamp: int, token: str) -> str:
         """生成API签名（使用MD5）"""
@@ -226,188 +232,6 @@ class CampusFly:
         print(f"🔍 跳过token验证，直接使用token: {token[:20]}...")
         return True
     
-    def get_track_position_with_rotation(self, t: int, center_lat: float = None, center_lng: float = None, 
-                                       rotation: float = None, offset_x: float = 0, offset_y: float = 0,
-                                       add_noise: bool = True) -> Dict:
-        """
-        支持旋转的跑道位置计算函数（完全按照FitnessResolver的算法）
-        添加自然波动优化，使轨迹更真实
-        """
-        if center_lat is None:
-            center_lat = self.track_config["center_lat"]
-        if center_lng is None:
-            center_lng = self.track_config["center_lng"]
-        if rotation is None:
-            rotation = self.track_config["rotation"]
-        
-        # 1. 标准跑道参数（内圈）
-        straight_length = 84.39  # 单段直道长度（米）
-        band_radius = 36.5       # 弯道半径（米）
-        band_circumference = math.pi * band_radius  # 单段弯道长度（≈114.66米）
-        total_circumference = 2 * straight_length + 2 * band_circumference  # ≈400米
-
-        # 2. 速度参数（1公里/6.5分钟）
-        speed = 1000 / 6.5 / 60  # ≈153.846米/分钟
-        distance = (speed * t) % total_circumference  # 累计移动距离
-
-        # 3. 计算原始相对坐标（未旋转，默认东西向长轴）
-        x, y = 0, 0
-        if distance <= straight_length:
-            # 阶段1：右侧直道（东西向时，向右为X正方向）
-            x = straight_length / 2 - distance
-            y = -band_radius
-        elif distance <= straight_length + band_circumference:
-            # 阶段2：上弯道
-            arc_distance = distance - straight_length
-            angle = arc_distance / band_radius  # 0→π弧度（顺时针）
-            x = -straight_length / 2 - band_radius * math.sin(angle)
-            y = -band_radius * math.cos(angle)
-        elif distance <= 2 * straight_length + band_circumference:
-            # 阶段3：左侧直道
-            straight2_distance = distance - (straight_length + band_circumference)
-            x = -straight_length / 2 + straight2_distance
-            y = band_radius
-        else:
-            # 阶段4：下弯道
-            arc_distance = distance - (2 * straight_length + band_circumference)
-            angle = arc_distance / band_radius  # 0→π弧度（顺时针）
-            x = straight_length / 2 + band_radius * math.sin(angle)
-            y = band_radius * math.cos(angle)
-
-        # 4. 叠加偏移量
-        x += offset_x
-        y += offset_y
-
-        # 5. 坐标旋转（核心：将东西向转换为南北向或自定义角度）
-        rotation_rad = rotation * math.pi / 180  # 角度转弧度
-        cos_rot = math.cos(rotation_rad)
-        sin_rot = math.sin(rotation_rad)
-        # 旋转公式：x' = x*cosθ - y*sinθ；y' = x*sinθ + y*cosθ
-        x_rotated = x * cos_rot - y * sin_rot
-        y_rotated = x * sin_rot + y * cos_rot
-
-        # 6. 旋转后的坐标转换为经纬度
-        earth_radius = 6378137  # 地球赤道半径（米）
-        rad_lat = center_lat * math.pi / 180
-        lng_per_meter = 1 / (earth_radius * math.cos(rad_lat))  # 1米对应的经度差（弧度）
-        lat_per_meter = 1 / earth_radius  # 1米对应的纬度差（弧度）
-
-        # 计算基础坐标
-        base_lat = center_lat + (y_rotated * lat_per_meter) * (180 / math.pi)
-        base_lng = center_lng + (x_rotated * lng_per_meter) * (180 / math.pi)
-        
-        # 7. 添加真实跑步轨迹优化（可选）
-        if add_noise:
-            # 计算跑道宽度方向的偏移（垂直于跑道方向）
-            track_width_offset = self.get_track_width_offset(distance, t)
-            
-            # 计算跑道方向向量（用于垂直偏移）
-            direction_vector = self.get_track_direction_vector(distance, straight_length, band_radius)
-            
-            # 应用跑道宽度偏移
-            offset_x = direction_vector[0] * track_width_offset
-            offset_y = direction_vector[1] * track_width_offset
-            
-            # 转换为经纬度偏移
-            lat_offset = offset_y * lat_per_meter * (180 / math.pi)
-            lng_offset = offset_x * lng_per_meter * (180 / math.pi)
-            
-            final_lat = base_lat + lat_offset
-            final_lng = base_lng + lng_offset
-        else:
-            final_lat = base_lat
-            final_lng = base_lng
-
-        return {
-            "latitude": final_lat,
-            "longitude": final_lng
-        }
-    
-    def get_track_width_offset(self, distance: float, t: int) -> float:
-        """计算跑道宽度方向的偏移，模拟真实跑步轨迹"""
-        # 跑道宽度约1.22米，跑者会在跑道宽度范围内摆动
-        track_width = 1.22
-        
-        # 基于时间和距离的周期性变化，模拟跑步节奏
-        rhythm_factor = math.sin(t * 0.1) * 0.3 + math.cos(t * 0.07) * 0.2
-        
-        # 基于距离的长期变化，模拟跑者在内道和外道之间的切换
-        lane_switch = math.sin(distance * 0.01) * 0.4
-        
-        # 添加随机微调，但幅度很小
-        random_factor = random.uniform(-0.1, 0.1)
-        
-        # 在弯道处增加外倾偏移
-        if distance > 84.39 and distance < 84.39 + math.pi * 36.5:  # 上弯道
-            curve_factor = 0.3
-        elif distance > 2 * 84.39 + math.pi * 36.5:  # 下弯道
-            curve_factor = 0.3
-        else:
-            curve_factor = 0.0
-        
-        # 计算总偏移（米）
-        total_offset = (rhythm_factor + lane_switch + random_factor + curve_factor) * track_width
-        
-        # 限制在跑道宽度范围内
-        return max(-track_width/2, min(track_width/2, total_offset))
-    
-    def get_track_direction_vector(self, distance: float, straight_length: float, band_radius: float) -> Tuple[float, float]:
-        """计算跑道方向向量，用于垂直偏移"""
-        band_circumference = math.pi * band_radius
-        
-        if distance <= straight_length:
-            # 直道：垂直于东西方向（南北方向）
-            return (0, 1)
-        elif distance <= straight_length + band_circumference:
-            # 上弯道：垂直于切线方向
-            arc_distance = distance - straight_length
-            angle = arc_distance / band_radius
-            return (math.sin(angle), -math.cos(angle))
-        elif distance <= 2 * straight_length + band_circumference:
-            # 左侧直道：垂直于南北方向（东西方向）
-            return (1, 0)
-        else:
-            # 下弯道：垂直于切线方向
-            arc_distance = distance - (2 * straight_length + band_circumference)
-            angle = arc_distance / band_radius
-            return (-math.sin(angle), math.cos(angle))
-    
-    def get_dynamic_speed(self, base_speed: float = None, t: int = 0) -> float:
-        """获取动态配速，添加真实跑步节奏变化"""
-        if base_speed is None:
-            base_speed = self.track_config["speed"]
-        
-        if self.track_config.get("enable_speed_variation", True):
-            # 基础变化范围
-            variation = self.track_config.get("speed_variation", 0.05)
-            
-            # 跑步节奏变化（基于时间）
-            rhythm_factor = math.sin(t * 0.05) * 0.02 + math.cos(t * 0.03) * 0.01
-            
-            # 疲劳因子（随着时间增加，速度略有下降）
-            fatigue_factor = 1.0 - (t / 3600) * 0.05  # 1小时后速度下降5%
-            fatigue_factor = max(0.9, fatigue_factor)  # 最多下降10%
-            
-            # 随机微调
-            random_factor = random.uniform(-variation, variation)
-            
-            # 计算最终速度
-            total_factor = 1.0 + rhythm_factor + random_factor
-            final_speed = base_speed * total_factor * fatigue_factor
-            
-            return final_speed
-        else:
-            return base_speed
-    
-    def get_track_variation(self) -> Dict:
-        """获取轨迹变化参数，使每次运行都有所不同"""
-        return {
-            "center_offset_lat": random.uniform(-0.0001, 0.0001),  # ±10米
-            "center_offset_lng": random.uniform(-0.0001, 0.0001),  # ±10米
-            "rotation_offset": random.uniform(-5, 5),  # ±5度
-            "speed_variation": random.uniform(0.95, 1.05)  # ±5%速度变化
-        }
-    
     def calculate_distance(self, lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         """计算两个经纬度坐标之间的直线距离（米）- 完全按照FitnessResolver的算法"""
         # 地球半径（米，WGS84椭球模型近似值）
@@ -463,16 +287,15 @@ class CampusFly:
         else:
             self.running_state["time"] = int(current_time - self.running_state["start_time"])
         
-        # 生成当前位置，使用真实跑步轨迹优化
-        pos = self.get_track_position_with_rotation(
-            self.running_state["time"],
-            add_noise=self.track_config.get("enable_noise", True)
+        # 生成当前位置，使用路线生成器的三层模拟系统
+        pos = self.route_generator.get_track_position_with_rotation(
+            self.running_state["time"]
         )
         
-        # 计算距离 - 按照FitnessResolver的逻辑
+        # 计算距离 - 使用路线生成器
         if len(self.running_state["positions"]) > 0:
             last_pos = self.running_state["positions"][-1]
-            distance_increment = self.calculate_distance(
+            distance_increment = self.route_generator.calculate_distance(
                 pos["latitude"], pos["longitude"],
                 last_pos["latitude"], last_pos["longitude"]
             )
@@ -639,14 +462,31 @@ class CampusFly:
             self.running_state["start_time"] = 0  # 重置开始时间，让heartbeat重新计算
             
             try:
+                next_heartbeat_time = time.time()  # 下次心跳的目标时间
+                
                 while self.running_state["distance"] < target_distance and self.running_state["is_running"]:
+                    # 记录本次循环开始时间
+                    loop_start_time = time.time()
+                    
+                    # 执行心跳包
                     self.adaptive_heartbeat(keep_running=True)
-                    # 使用自适应间隔
-                    time.sleep(self.heartbeat_config["current_interval"])
                     
                     # 检查是否达到目标距离
                     if self.running_state["distance"] >= target_distance:
                         break
+                    
+                    # 计算下次心跳的目标时间
+                    next_heartbeat_time += self.heartbeat_config["current_interval"]
+                    
+                    # 计算需要睡眠的时间（精确控制）
+                    sleep_time = next_heartbeat_time - time.time()
+                    
+                    # 如果睡眠时间为正，则睡眠；否则立即执行下次心跳
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    else:
+                        # 如果已经超时，重新同步时间
+                        next_heartbeat_time = time.time()
                         
             except KeyboardInterrupt:
                 print("\n\n⏹️  用户中断跑步")
@@ -671,26 +511,16 @@ class CampusFly:
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="校园跑程序")
+    parser = argparse.ArgumentParser(description="校园跑程序 - 使用三层真实模拟系统")
     parser.add_argument("--username", required=True, help="用户名（手机号）")
     parser.add_argument("--password", required=True, help="密码")
     parser.add_argument("--distance", type=int, default=5000, help="目标距离(米，默认5000)")
     parser.add_argument("--school", choices=["上海大学", "上海中医药大学"], default="上海大学", help="学校选择")
-    parser.add_argument("--enable-noise", action="store_true", default=True, help="启用真实跑步轨迹优化（默认启用）")
-    parser.add_argument("--disable-noise", action="store_true", help="禁用真实跑步轨迹优化")
-    parser.add_argument("--enable-speed-variation", action="store_true", default=True, help="启用配速变化优化（默认启用）")
-    parser.add_argument("--disable-speed-variation", action="store_true", help="禁用配速变化优化")
     
     args = parser.parse_args()
     
-    # 创建程序实例
+    # 创建程序实例（自动使用三层模拟系统）
     campus_fly = CampusFly()
-    
-    # 配置优化选项
-    if args.disable_noise:
-        campus_fly.track_config["enable_noise"] = False
-    if args.disable_speed_variation:
-        campus_fly.track_config["enable_speed_variation"] = False
     
     # 运行程序
     success = campus_fly.run_campus_fly(
